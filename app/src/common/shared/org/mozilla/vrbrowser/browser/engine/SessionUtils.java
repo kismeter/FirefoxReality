@@ -5,6 +5,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.mozilla.gecko.GeckoProfile;
@@ -25,8 +26,42 @@ class SessionUtils {
         return url != null && (url.startsWith("about:") || url.startsWith("data:"));
     }
 
-    public static void vrPrefsWorkAround(Context aContext, Bundle aExtras) {
+    private static void checkPrefsFile(Context aContext, @NonNull String path) {
+        int lastVersionCode = SettingsStore.getInstance(aContext).getPrefsLastResetVersionCode();
+        if (BuildConfig.VERSION_CODE > lastVersionCode) {
+            try {
+                File prefsFile = new File(path);
+                if (prefsFile.exists()) {
+                    if (prefsFile.delete()) {
+                        Log.d(LOGTAG, "Deleted prefs cache: " + path);
+                        SettingsStore.getInstance(aContext).setPrefsLastResetVersionCode(BuildConfig.VERSION_CODE);
+                        return;
+                    }
+                    Log.e(LOGTAG, "Failed to delete prefs cache file.");
+                } else {
+                    // Probably the first run. Set the version code so we do not delete the newly created pref cache
+                    // on the next run.
+                    SettingsStore.getInstance(aContext).setPrefsLastResetVersionCode(BuildConfig.VERSION_CODE);
+                }
+            } catch (Exception e) {
+                Log.e(LOGTAG, "Failed to delete prefs cache file. Caught: " + e.getLocalizedMessage());
+            }
+        } else {
+            Log.d(LOGTAG, "Version code is unchanged.");
+        }
+    }
+
+    public static void vrPrefsWorkAround(Context aContext) {
+        if (EngineProvider.INSTANCE.isRuntimeCreated()) {
+            throw new IllegalStateException("vrPrefsWorkAround must be called before creating the runtime");
+        }
+
         File path = GeckoProfile.initFromArgs(aContext, null).getDir();
+
+        if (BuildConfig.TASKCLUSTER_BUILD) {
+            checkPrefsFile(aContext, path.getAbsolutePath() + File.separator + "prefs.js");
+        }
+
         String prefFileName = path.getAbsolutePath() + File.separator + "user.js";
         Log.i(LOGTAG, "Creating file: " + prefFileName);
         try (FileOutputStream out = new FileOutputStream(prefFileName)) {
@@ -34,6 +69,11 @@ class SessionUtils {
             out.write("user_pref(\"dom.vr.external.enabled\", true);\n".getBytes());
             out.write("user_pref(\"dom.vr.webxr.enabled\", true);\n".getBytes());
             out.write("user_pref(\"webgl.enable-surface-texture\", true);\n".getBytes());
+            if (BuildConfig.DEBUG && SettingsStore.getInstance(aContext).isWebGLOutOfProcess()) {
+                out.write("user_pref(\"webgl.out-of-process\", true);\n".getBytes());
+            } else {
+                out.write("user_pref(\"webgl.out-of-process\", false);\n".getBytes());
+            }
             // Enable MultiView draft extension
             out.write("user_pref(\"webgl.enable-draft-extensions\", true);\n".getBytes());
             out.write("user_pref(\"dom.webcomponents.customelements.enabled\", true);\n".getBytes());
@@ -51,18 +91,6 @@ class SessionUtils {
                 out.write("user_pref(\"webgl.msaa-force\", true);\n".getBytes());
             } else {
                 out.write("user_pref(\"webgl.msaa-force\", false);\n".getBytes());
-            }
-            if (BuildConfig.DEBUG) {
-                int processCount = SettingsStore.getInstance(aContext).isMultiE10s() ? 3 : 1;
-                out.write(("user_pref(\"dom.ipc.processCount\", " + processCount + ");\n").getBytes());
-                addOptionalPref(out, "dom.vr.require-gesture", aExtras);
-                addOptionalPref(out, "privacy.reduceTimerPrecision", aExtras);
-                if (aExtras != null && aExtras.getBoolean("media.autoplay.enabled", false)) {
-                    // Enable playing audios without gesture (used for gfx automated testing)
-                    out.write("user_pref(\"media.autoplay.enabled.user-gestures-needed\", false);\n".getBytes());
-                    out.write("user_pref(\"media.autoplay.enabled.ask-permission\", false);\n".getBytes());
-                    out.write("user_pref(\"media.autoplay.default\", 0);\n".getBytes());
-                }
             }
         } catch (FileNotFoundException e) {
             Log.e(LOGTAG, "Unable to create file: '" + prefFileName + "' got exception: " + e.toString());

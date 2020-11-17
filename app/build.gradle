@@ -19,6 +19,13 @@ def getGitHash = { ->
     return stdout.toString().trim()
 }
 
+def getTaskclusterBuild = { ->
+    if (gradle.hasProperty("userProperties.taskclusterBuild")) {
+        return gradle."userProperties.taskclusterBuild"
+    }
+    return "false"
+}
+
 def getCrashRestartDisabled = { ->
     if (gradle.hasProperty("userProperties.disableCrashRestart")) {
         return gradle."userProperties.disableCrashRestart"
@@ -65,9 +72,11 @@ android {
         minSdkVersion build_versions.min_sdk
         targetSdkVersion build_versions.target_sdk
         versionCode 1
-        versionName "11"
+        versionName "12.1"
         buildConfigField "String", "GIT_HASH", "\"${getGitHash()}\""
         buildConfigField "Boolean", "DISABLE_CRASH_RESTART", getCrashRestartDisabled()
+        buildConfigField "Boolean", "TASKCLUSTER_BUILD", getTaskclusterBuild()
+        buildConfigField "String", "AMO_COLLECTION", "\"fxr\""
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
@@ -85,7 +94,7 @@ android {
                         "room.expandProjection":"true"]
             }
         }
-
+        vectorDrawables.useSupportLibrary = true
     }
 
     if (gradle.hasProperty('userProperties.taskclusterBuild')) {
@@ -100,15 +109,21 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_1_8.toString()
+    }
+
     buildTypes {
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             signingConfig getUseDebugSigningOnRelease() ? debug.signingConfig : release.signingConfig
+            buildConfigField 'String', 'PROPS_ENDPOINT', '"http://mixedreality.mozilla.org/FirefoxReality/props.json"'
         }
         debug {
             applicationIdSuffix getDevApplicationIdSuffix()
             pseudoLocalesEnabled true
+            buildConfigField 'String', 'PROPS_ENDPOINT', '"http://mixedreality.mozilla.org/FirefoxReality/props.json"'
         }
     }
 
@@ -374,6 +389,7 @@ android {
                     'src/picovr/res'
             ]
             jniLibs.srcDirs = ["${project.rootDir}/third_party/picovr"]
+            manifest.srcFile "src/picovr/AndroidManifest.xml"
         }
 
         noapi {
@@ -395,7 +411,6 @@ android {
 configurations {
     armImplementation
     x86Implementation
-    all*.exclude group: 'androidx.appcompat', module: 'appcompat'
 }
 
 repositories {
@@ -412,8 +427,7 @@ dependencies {
     implementation deps.lifecycle.runtime
     implementation deps.lifecycle.viewmodel
     implementation deps.support.cardview
-    //implementation deps.support.app_compat
-    implementation(name:'appcompat', ext:'aar')
+    implementation deps.support.app_compat
     implementation deps.support.vector_drawable
     implementation deps.support.annotations
     implementation deps.constraint_layout
@@ -424,26 +438,29 @@ dependencies {
     // Android Components
     implementation deps.mozilla_speech.library
     implementation deps.mozilla_speech.utils
-    implementation deps.android_components.telemetry
     implementation deps.android_components.browser_errorpages
     implementation deps.android_components.browser_search
+    implementation deps.android_components.browser_state
     implementation deps.android_components.browser_storage
     implementation deps.android_components.browser_domains
     implementation deps.android_components.service_accounts
+    implementation deps.android_components.service_sync_logins
     implementation deps.android_components.mozilla_service_location
     implementation deps.android_components.ui_autocomplete
+    implementation deps.android_components.concept_engine
     implementation deps.android_components.concept_fetch
     implementation deps.android_components.lib_fetch
+    implementation deps.android_components.lib_dataprotect
     implementation deps.android_components.support_rustlog
     implementation deps.android_components.support_rusthttp
+    implementation deps.android_components.support_webextensions
+    implementation deps.android_components.support_ktx
+    implementation deps.android_components.feature_accounts
+    implementation deps.android_components.feature_webcompat
+    implementation deps.android_components.feature_webcompat_reporter
+    implementation deps.android_components.feature_addons
     implementation deps.android_components.glean
     implementation deps.app_services.rustlog
-
-    // TODO this should not be necessary at all, see Services.kt
-    implementation deps.work.runtime
-
-    // TODO this should not be necessary at all, see Services.kt
-    implementation deps.work.runtime
 
     // Kotlin dependency
     implementation deps.kotlin.stdlib
@@ -487,11 +504,13 @@ if (findProject(':wavesdk')) {
 }
 
 dependencies {
-    // To see what the latest geckoview-nightly version is go here:
-    // https://maven.mozilla.org/?prefix=maven2/org/mozilla/geckoview/geckoview-nightly-armeabi-v7a/
-    armImplementation deps.gecko_view.nightly_armv7a
-    arm64Implementation deps.gecko_view.nightly_arm64
-    x86_64Implementation deps.gecko_view.nightly_x86_64
+
+    implementation 'com.google.android.material:material:1.0.0'
+    implementation 'androidx.viewpager2:viewpager2:1.0.0'
+    // "nightly" or "beta" or "release"
+    def branch = "nightly"
+    arm64Implementation deps.gecko_view."${branch}_arm64"
+    x86_64Implementation deps.gecko_view."${branch}_x86_64"
 }
 
 if (gradle.hasProperty('geckoViewLocalArm') || gradle.hasProperty('geckoViewLocalX86')) {

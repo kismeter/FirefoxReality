@@ -22,6 +22,7 @@
         <attr name="privateModeTintColorList" format="reference|color" />
         <attr name="activeModeTintColorList" format="reference|color" />
         <attr name="notificationModeTintColorList" format="reference|color" />
+        <attr name="privateNotificationModeTintColorList" format="reference|color" />
         <attr name="privateModeBackground" format="integer" />
         <attr name="activeModeBackground" format="integer" />
         <attr name="regularModeBackground" format="integer" />
@@ -29,6 +30,7 @@
         <attr name="tooltipPosition" />
         <attr name="tooltipDensity" />
         <attr name="tooltipLayout" />
+        <attr name="tooltipCurved" />
     </declare-styleable>
 
     <attr name="buttonText" format="string" />
@@ -44,6 +46,7 @@
     </attr>
     <attr name="tooltipDensity" format="dimension" />
     <attr name="tooltipLayout" format="reference" />
+    <attr name="tooltipCurved" format="boolean" />
 
     <declare-styleable name="SwitchSetting">
         <attr name="description" />

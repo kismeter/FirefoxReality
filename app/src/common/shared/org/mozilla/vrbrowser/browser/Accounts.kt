@@ -31,6 +31,7 @@ import org.mozilla.vrbrowser.utils.SystemUtils
 import org.mozilla.vrbrowser.utils.ViewUtils
 import java.net.URL
 import java.util.concurrent.CompletableFuture
+import kotlin.concurrent.thread
 
 const val PROFILE_PICTURE_TAG = "fxa_profile_picture"
 
@@ -54,6 +55,9 @@ class Accounts constructor(val context: Context) {
 
     var profilePicture: BitmapDrawable? = loadDefaultProfilePicture()
     var loginOrigin: LoginOrigin = LoginOrigin.NONE
+        private set
+    var originSessionId: String? = null
+        private set
     var accountStatus = AccountStatus.SIGNED_OUT
     private val accountListeners = ArrayList<AccountObserver>()
     private val syncListeners = ArrayList<SyncStatusObserver>()
@@ -137,10 +141,11 @@ class Accounts constructor(val context: Context) {
             )
 
             account.deviceConstellation().refreshDevicesAsync()
-            accountListeners.toMutableList().forEach {
-                Handler(Looper.getMainLooper()).post {
+            Handler(Looper.getMainLooper()).post {
+                accountListeners.toMutableList().forEach {
                     it.onAuthenticated(account, authType)
                 }
+                originSessionId = null
             }
         }
 
@@ -148,6 +153,8 @@ class Accounts constructor(val context: Context) {
             Log.d(LOGTAG, "There was a problem authenticating the user")
 
             GleanMetricsService.FxA.signInResult(false)
+
+            originSessionId = null
 
             accountStatus = AccountStatus.NEEDS_RECONNECT
             accountListeners.toMutableList().forEach {
@@ -159,6 +166,8 @@ class Accounts constructor(val context: Context) {
 
         override fun onLoggedOut() {
             Log.d(LOGTAG, "The user has been logged out")
+
+            originSessionId = null
 
             accountStatus = AccountStatus.SIGNED_OUT
             accountListeners.toMutableList().forEach {
@@ -202,7 +211,7 @@ class Accounts constructor(val context: Context) {
     }
 
     private fun loadProfilePicture(profile: Profile) {
-        CoroutineScope(Dispatchers.IO).launch {
+        thread {
             try {
                 val url = URL(profile.avatar!!.url)
                 BitmapFactory.decodeStream(url.openStream())?.let {
@@ -378,6 +387,11 @@ class Accounts constructor(val context: Context) {
 
     fun getConnectionSuccessURL(): String {
         return (services.accountManager.authenticatedAccount() as FirefoxAccount).getConnectionSuccessURL()
+    }
+
+    fun setOrigin(origin: LoginOrigin, sessionId: String?) {
+        loginOrigin = origin
+        originSessionId = sessionId
     }
 
 }

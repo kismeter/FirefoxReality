@@ -62,6 +62,8 @@ const char* const kDisableLayers = "disableLayers";
 const char* const kDisableLayersSignature = "()V";
 const char* const kAppendAppNotesToCrashReport = "appendAppNotesToCrashReport";
 const char* const kAppendAppNotesToCrashReportSignature = "(Ljava/lang/String;)V";
+const char* const kUpdateControllerBatteryLevelsName = "updateControllerBatteryLevels";
+const char* const kUpdateControllerBatteryLevelsSignature = "(II)V";
 
 JNIEnv* sEnv = nullptr;
 jclass sBrowserClass = nullptr;
@@ -92,6 +94,7 @@ jmethodID sHandlePoorPerformance = nullptr;
 jmethodID sOnAppLink = nullptr;
 jmethodID sDisableLayers = nullptr;
 jmethodID sAppendAppNotesToCrashReport = nullptr;
+jmethodID sUpdateControllerBatteryLevels = nullptr;
 }
 
 namespace crow {
@@ -137,6 +140,7 @@ VRBrowser::InitializeJava(JNIEnv* aEnv, jobject aActivity) {
   sOnAppLink = FindJNIMethodID(sEnv, sBrowserClass, kOnAppLink, kOnAppLinkSignature);
   sDisableLayers = FindJNIMethodID(sEnv, sBrowserClass, kDisableLayers, kDisableLayersSignature);
   sAppendAppNotesToCrashReport = FindJNIMethodID(sEnv, sBrowserClass, kAppendAppNotesToCrashReport, kAppendAppNotesToCrashReportSignature);
+  sUpdateControllerBatteryLevels = FindJNIMethodID(sEnv, sBrowserClass, kUpdateControllerBatteryLevelsName, kUpdateControllerBatteryLevelsSignature);
 }
 
 void
@@ -338,7 +342,7 @@ VRBrowser::GetActiveEnvironment() {
   std::string str = std::string(cstr);
   sEnv->ReleaseStringUTFChars(jStr, cstr);
 
-  return "cubemap/" + str;
+  return str;
 }
 
 int32_t
@@ -404,5 +408,13 @@ VRBrowser::AppendAppNotesToCrashLog(const std::string& aNotes) {
   sEnv->DeleteLocalRef(notes);
   CheckJNIException(sEnv, __FUNCTION__);
 }
+
+void
+VRBrowser::UpdateControllerBatteryLevels(const jint aLeftBatteryLevel, const jint aRightBatteryLevel) {
+  if (!ValidateMethodID(sEnv, sActivity, sUpdateControllerBatteryLevels, __FUNCTION__)) { return; }
+  sEnv->CallVoidMethod(sActivity, sUpdateControllerBatteryLevels, aLeftBatteryLevel, aRightBatteryLevel);
+  CheckJNIException(sEnv, __FUNCTION__);
+}
+
 
 } // namespace crow

@@ -23,30 +23,35 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.databinding.DataBindingUtil;
+import androidx.lifecycle.ViewModelProvider;
 
 import org.mozilla.vrbrowser.BuildConfig;
 import org.mozilla.vrbrowser.R;
+import org.mozilla.vrbrowser.VRBrowserActivity;
 import org.mozilla.vrbrowser.VRBrowserApplication;
 import org.mozilla.vrbrowser.audio.AudioEngine;
 import org.mozilla.vrbrowser.browser.Accounts;
+import org.mozilla.vrbrowser.browser.SettingsStore;
 import org.mozilla.vrbrowser.browser.engine.Session;
-import org.mozilla.vrbrowser.browser.engine.SessionStore;
 import org.mozilla.vrbrowser.databinding.SettingsBinding;
 import org.mozilla.vrbrowser.db.SitePermission;
 import org.mozilla.vrbrowser.telemetry.GleanMetricsService;
+import org.mozilla.vrbrowser.ui.viewmodel.SettingsViewModel;
 import org.mozilla.vrbrowser.ui.widgets.UIWidget;
 import org.mozilla.vrbrowser.ui.widgets.WidgetPlacement;
 import org.mozilla.vrbrowser.ui.widgets.WindowWidget;
 import org.mozilla.vrbrowser.ui.widgets.dialogs.RestartDialogWidget;
 import org.mozilla.vrbrowser.ui.widgets.dialogs.UIDialog;
+import org.mozilla.vrbrowser.utils.RemoteProperties;
 import org.mozilla.vrbrowser.utils.StringUtils;
 
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
+import mozilla.components.Build;
+import mozilla.components.concept.storage.Login;
 import mozilla.components.concept.sync.AccountObserver;
 import mozilla.components.concept.sync.AuthType;
 import mozilla.components.concept.sync.OAuthAccount;
@@ -63,6 +68,7 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
     private Accounts mAccounts;
     private Executor mUIThreadExecutor;
     private SettingsView.SettingViewType mOpenDialog;
+    private SettingsViewModel mSettingsViewModel;
 
     class VersionGestureListener extends GestureDetector.SimpleOnGestureListener {
 
@@ -70,7 +76,9 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
 
         @Override
         public boolean onDown (MotionEvent e) {
-            mBinding.buildText.setText(mIsHash ? StringUtils.versionCodeToDate(getContext(), BuildConfig.VERSION_CODE) : BuildConfig.GIT_HASH);
+            mBinding.buildText.setText(mIsHash ?
+                    StringUtils.versionCodeToDate(getContext(), BuildConfig.VERSION_CODE) :
+                    BuildConfig.GIT_HASH + " (AC " + Build.version + ")");
 
             mIsHash = !mIsHash;
 
@@ -95,6 +103,11 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
 
     @SuppressLint("ClickableViewAccessibility")
     private void initialize() {
+        mSettingsViewModel = new ViewModelProvider(
+                (VRBrowserActivity)getContext(),
+                ViewModelProvider.AndroidViewModelFactory.getInstance(((VRBrowserActivity) getContext()).getApplication()))
+                .get(SettingsViewModel.class);
+
         updateUI();
 
         mOpenDialog = SettingsView.SettingViewType.MAIN;
@@ -120,17 +133,13 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
 
         // Inflate this data binding layout
         mBinding = DataBindingUtil.inflate(inflater, R.layout.settings, this, true);
+        mBinding.setSettingsmodel(mSettingsViewModel);
 
         mBinding.backButton.setOnClickListener(v -> {
             if (mAudio != null) {
                 mAudio.playSound(AudioEngine.Sound.CLICK);
             }
 
-            onDismiss();
-        });
-
-        mBinding.reportIssueButton.setOnClickListener(v -> {
-            onSettingsReportClick();
             onDismiss();
         });
 
@@ -222,6 +231,15 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
             showView(SettingsView.SettingViewType.CONTROLLER);
         });
 
+        mBinding.whatsNewButton.setOnClickListener(v -> {
+            SettingsStore.getInstance(getContext()).setRemotePropsVersionName(BuildConfig.VERSION_NAME);
+            RemoteProperties props = mSettingsViewModel.getProps().getValue().get(BuildConfig.VERSION_NAME);
+            if (props != null) {
+                mWidgetManager.openNewTabForeground(props.getWhatsNewUrl());
+            }
+            onDismiss();
+        });
+
         mCurrentView = null;
     }
 
@@ -263,32 +281,6 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
         showView(SettingsView.SettingViewType.PRIVACY);
     }
 
-    private void onSettingsReportClick() {
-        Session session = SessionStore.get().getActiveSession();
-        String url = session.getCurrentUri();
-
-        try {
-            if (url == null) {
-                // In case the user had no active sessions when reporting, just leave the URL field empty.
-                url = "";
-            } else if (url.startsWith("jar:") || url.startsWith("resource:") || url.startsWith("about:") || url.startsWith("data:")) {
-                url = "";
-            } else if (session.isHomeUri(url)) {
-                // Use the original URL (without any hash).
-                url = session.getHomeUri();
-            }
-
-            url = URLEncoder.encode(url, "UTF-8");
-
-        } catch (UnsupportedEncodingException e) {
-            Log.e(LOGTAG, "Cannot encode URL");
-        }
-
-        mWidgetManager.openNewTabForeground(getContext().getString(R.string.private_report_url, url));
-
-        onDismiss();
-    }
-
     private void manageAccount() {
         switch(mAccounts.getAccountStatus()) {
             case SIGNED_OUT:
@@ -306,8 +298,12 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
                                 mAccounts.logoutAsync();
 
                             } else {
-                                mAccounts.setLoginOrigin(Accounts.LoginOrigin.SETTINGS);
                                 mWidgetManager.openNewTabForeground(url);
+                                Session currentSession = mWidgetManager.getFocusedWindow().getSession();
+                                String sessionId = currentSession != null ? currentSession.getId() : null;
+
+                                mAccounts.setOrigin(Accounts.LoginOrigin.SETTINGS, sessionId);
+
                                 GleanMetricsService.Tabs.openedCounter(GleanMetricsService.Tabs.TabSource.FXA_LOGIN);
                             }
 
@@ -391,6 +387,11 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
 
     @Override
     public void showView(SettingsView.SettingViewType aType) {
+        showView(aType, null);
+    }
+
+    @Override
+    public void showView(SettingsView.SettingViewType aType, @Nullable Object extras) {
         switch (aType) {
             case MAIN:
                 showView((SettingsView) null);
@@ -433,6 +434,20 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
                 break;
             case TRACKING_EXCEPTION:
                 showView(new TrackingPermissionsOptionsView(getContext(), mWidgetManager));
+                break;
+            case LOGINS_AND_PASSWORDS:
+                showView(new LoginAndPasswordsOptionsView(getContext(), mWidgetManager));
+                break;
+            case LOGIN_EXCEPTIONS:
+                showView(new SitePermissionsOptionsView(getContext(), mWidgetManager, SitePermission.SITE_PERMISSION_AUTOFILL));
+                break;
+            case SAVED_LOGINS:
+                showView(new SavedLoginsOptionsView(getContext(), mWidgetManager));
+                break;
+            case LOGIN_EDIT:
+                if (extras != null) {
+                    showView(new LoginEditOptionsView(getContext(), mWidgetManager, (Login)extras));
+                }
                 break;
         }
     }
@@ -492,6 +507,12 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
                 } else if (isPrivacySubView(mCurrentView)) {
                     showView(SettingsView.SettingViewType.PRIVACY);
 
+                } else if (isLoginsSubview(mCurrentView)) {
+                    showView(SettingsView.SettingViewType.LOGINS_AND_PASSWORDS);
+
+                } else if (isSavedLoginsSubview(mCurrentView)) {
+                    showView(SettingsView.SettingViewType.SAVED_LOGINS);
+
                 } else {
                     showView(SettingsView.SettingViewType.MAIN);
                 }
@@ -522,21 +543,25 @@ public class SettingsWidget extends UIDialog implements SettingsView.Delegate {
     }
 
     private boolean isLanguagesSubView(View view) {
-        if (view instanceof DisplayLanguageOptionsView ||
+        return view instanceof DisplayLanguageOptionsView ||
                 view instanceof ContentLanguageOptionsView ||
-                view instanceof  VoiceSearchLanguageOptionsView) {
-            return true;
-        }
-
-        return false;
+                view instanceof VoiceSearchLanguageOptionsView;
     }
 
     private boolean isPrivacySubView(View view) {
-        if (view instanceof SitePermissionsOptionsView) {
-            return true;
-        }
+        return (view instanceof SitePermissionsOptionsView &&
+                ((SitePermissionsOptionsView)view).getType() != SettingsView.SettingViewType.LOGIN_EXCEPTIONS) ||
+                view instanceof LoginAndPasswordsOptionsView;
+    }
 
-        return false;
+    private boolean isLoginsSubview(View view) {
+        return (view instanceof SitePermissionsOptionsView &&
+                ((SitePermissionsOptionsView)view).getType() == SettingsView.SettingViewType.LOGIN_EXCEPTIONS) ||
+                view instanceof SavedLoginsOptionsView;
+    }
+
+    private boolean isSavedLoginsSubview(View view) {
+        return view instanceof LoginEditOptionsView;
     }
 
 }

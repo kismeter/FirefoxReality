@@ -2,12 +2,13 @@ package org.mozilla.vrbrowser
 
 import androidx.test.core.app.ApplicationProvider
 import mozilla.components.concept.sync.DeviceType
+import mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient
 import mozilla.components.service.glean.testing.GleanTestRule
 import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mozilla.telemetry.TelemetryHolder
 import org.mozilla.vrbrowser.GleanMetrics.*
 import org.mozilla.vrbrowser.telemetry.GleanMetricsService
 import org.robolectric.RobolectricTestRunner
@@ -15,11 +16,20 @@ import org.robolectric.annotation.Config
 
 
 @RunWith(RobolectricTestRunner::class)
-@Config(manifest = Config.NONE)
+@Config(manifest = Config.NONE, application = TestApplication::class)
 class GleanMetricsServiceTest {
 
     @get:Rule
     val gleanRule = GleanTestRule(ApplicationProvider.getApplicationContext())
+
+    @Before
+    fun setup() {
+        val app = ApplicationProvider.getApplicationContext<TestApplication>()
+        // We use the HttpURLConnectionClient for tests as the GeckoWebExecutor based client needs
+        // full GeckoRuntime initialization and it crashes in the test environment.
+        val client = HttpURLConnectionClient()
+        GleanMetricsService.init(app, client)
+    }
 
     @Test
     fun testURLTelemetry() {
@@ -53,8 +63,15 @@ class GleanMetricsServiceTest {
         GleanMetricsService.testSetStartupMetrics()
         assertTrue(Distribution.channelName.testHasValue())
         assertEquals(Distribution.channelName.testGetValue(),
-                if (org.mozilla.vrbrowser.utils.DeviceType.isOculusBuild()) "oculusvr"
-                else BuildConfig.FLAVOR_platform)
+                org.mozilla.vrbrowser.utils.DeviceType.getDeviceTypeId());
+
+        // Make sure the distribution channel name is set after
+        // the telemetry system is switch off/on.
+        GleanMetricsService.stop();
+        GleanMetricsService.start();
+        assertTrue(Distribution.channelName.testHasValue())
+        assertEquals(Distribution.channelName.testGetValue(),
+                org.mozilla.vrbrowser.utils.DeviceType.getDeviceTypeId());
     }
 
     @Test
@@ -134,14 +151,6 @@ class GleanMetricsServiceTest {
         GleanMetricsService.Tabs.activatedEvent()
         assertTrue(Tabs.activated.testHasValue())
         assertEquals(Tabs.activated.testGetValue(), 1)
-    }
-
-    @Test
-    fun testLegacyTelemetry() {
-        assertFalse(LegacyTelemetry.clientId.testHasValue())
-        LegacyTelemetry.clientId.set(java.util.UUID.fromString(TelemetryHolder.get().getClientId()))
-        assertTrue(LegacyTelemetry.clientId.testHasValue())
-        assertEquals(LegacyTelemetry.clientId.testGetValue().toString(), TelemetryHolder.get().getClientId())
     }
 
     fun testPages() {

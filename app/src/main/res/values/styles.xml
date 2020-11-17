@@ -58,6 +58,7 @@
         <item name="privateModeTintColorList">@drawable/main_button_icon_color_private</item>
         <item name="activeModeTintColorList">@drawable/main_button_icon_color_active</item>
         <item name="notificationModeTintColorList">@drawable/main_button_icon_color_notification</item>
+        <item name="privateNotificationModeTintColorList">@drawable/main_button_icon_color_notification_private</item>
         <item name="clipColor">@color/azure</item>
     </style>
 
@@ -104,6 +105,26 @@
         <item name="android:background">@drawable/tray_background_unckecked_end</item>
         <item name="privateModeBackground">@drawable/tray_background_end_private</item>
         <item name="activeModeBackground">@drawable/tray_background_ckecked_end</item>
+    </style>
+
+    <style name="libraryButtonTheme">
+        <item name="android:padding">@dimen/library_button_padding</item>
+        <item name="android:layout_gravity">center_vertical</item>
+        <item name="android:layout_width">70dp</item>
+        <item name="android:layout_height">70dp</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="tintColorList">@drawable/library_button_icon_color</item>
+        <item name="activeModeTintColorList">@drawable/library_button_icon_color_active</item>
+    </style>
+
+    <style name="libraryButtonStartTheme" parent="libraryButtonTheme">
+        <item name="android:background">@drawable/library_button_background_start</item>
+        <item name="activeModeBackground">@drawable/library_button_active_background_start</item>
+    </style>
+
+    <style name="libraryButtonMiddleTheme" parent="libraryButtonTheme">
+        <item name="android:background">@drawable/library_button_background</item>
+        <item name="activeModeBackground">@drawable/library_button_active_background</item>
     </style>
 
     <style name="honeycombButtonTheme">
@@ -184,6 +205,7 @@
         <item name="privateModeTintColorList">@drawable/main_button_icon_color_private</item>
         <item name="activeModeTintColorList">@drawable/main_button_icon_color_active</item>
         <item name="notificationModeTintColorList">@drawable/main_button_icon_color_notification</item>
+        <item name="privateNotificationModeTintColorList">@drawable/main_button_icon_color_notification_private</item>
     </style>
 
     <style name="urlBarIconThemeStart">
@@ -197,6 +219,7 @@
         <item name="privateModeTintColorList">@drawable/main_button_icon_color_private</item>
         <item name="activeModeTintColorList">@drawable/main_button_icon_color_active</item>
         <item name="notificationModeTintColorList">@drawable/main_button_icon_color_notification</item>
+        <item name="privateNotificationModeTintColorList">@drawable/main_button_icon_color_notification_private</item>
     </style>
 
     <style name="urlBarIconThemeEnd">
@@ -210,6 +233,7 @@
         <item name="privateModeTintColorList">@drawable/main_button_icon_color_private</item>
         <item name="activeModeTintColorList">@drawable/main_button_icon_color_active</item>
         <item name="notificationModeTintColorList">@drawable/main_button_icon_color_notification</item>
+        <item name="privateNotificationModeTintColorList">@drawable/main_button_icon_color_notification_private</item>
     </style>
 
     <style name="scrollbar">

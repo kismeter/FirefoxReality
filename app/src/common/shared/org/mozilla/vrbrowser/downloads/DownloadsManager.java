@@ -1,6 +1,6 @@
 package org.mozilla.vrbrowser.downloads;
 
-import  android.app.DownloadManager;
+import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -10,14 +10,12 @@ import android.net.Uri;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 import android.webkit.URLUtil;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.mozilla.speechlibrary.utils.StorageUtils;
-
+import org.mozilla.vrbrowser.R;
 import org.mozilla.vrbrowser.browser.SettingsStore;
 import org.mozilla.vrbrowser.utils.UrlUtils;
 
@@ -60,7 +58,7 @@ public class DownloadsManager {
         List<Download> downloads = getDownloads();
         downloads.forEach(download -> {
             if (mDownloadManager != null &&
-                    !new File(UrlUtils.stripProtocol(download.getOutputFile())).exists()) {
+                    !new File(UrlUtils.stripProtocol(download.getOutputFileUri())).exists()) {
                 mDownloadManager.remove(download.getId());
             }
         });
@@ -105,7 +103,7 @@ public class DownloadsManager {
 
     public void startDownload(@NonNull DownloadJob job, @SettingsStore.Storage int storageType) {
         if (!URLUtil.isHttpUrl(job.getUri()) && !URLUtil.isHttpsUrl(job.getUri())) {
-            notifyDownloadError("Cannot download non http/https files", job.getFilename());
+            notifyDownloadError(mContext.getString(R.string.download_error_protocol), job.getFilename());
             return;
         }
 
@@ -118,12 +116,12 @@ public class DownloadsManager {
         request.setVisibleInDownloadsUi(false);
         if (job.getOutputPath() == null) {
             if (storageType == SettingsStore.EXTERNAL) {
-                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, job.getFilename());
+                request.setDestinationInExternalFilesDir(mContext, Environment.DIRECTORY_DOWNLOADS, job.getFilename());
 
             } else {
                 String outputPath = getOutputPathForJob(job);
                 if (outputPath == null) {
-                    notifyDownloadError("Cannot create output file", job.getFilename());
+                    notifyDownloadError(mContext.getString(R.string.download_error_output), job.getFilename());
                     return;
                 }
                 request.setDestinationUri(Uri.parse(outputPath));
@@ -134,7 +132,12 @@ public class DownloadsManager {
         }
 
         if (mDownloadManager != null) {
-            mDownloadManager.enqueue(request);
+            try {
+                mDownloadManager.enqueue(request);
+            } catch (SecurityException e) {
+                notifyDownloadError(mContext.getString(R.string.download_error_output), job.getFilename());
+                return;
+            }
             scheduleUpdates();
         }
     }
@@ -154,9 +157,9 @@ public class DownloadsManager {
         Download download = getDownload(downloadId);
         if (download != null) {
             if (!deleteFiles) {
-                File file = new File(UrlUtils.stripProtocol(download.getOutputFile()));
+                File file = new File(UrlUtils.stripProtocol(download.getOutputFileUri()));
                 if (file.exists()) {
-                    File newFile = new File(UrlUtils.stripProtocol(download.getOutputFile().concat(".bak")));
+                    File newFile = new File(UrlUtils.stripProtocol(download.getOutputFileUri().concat(".bak")));
                     file.renameTo(newFile);
                     if (mDownloadManager != null) {
                         mDownloadManager.remove(downloadId);
@@ -216,6 +219,13 @@ public class DownloadsManager {
         }
 
         return downloads;
+    }
+
+    public boolean isDownloading() {
+        return getDownloads().stream()
+                .filter(item ->
+                        item.getStatus() == DownloadManager.STATUS_RUNNING)
+                .findFirst().orElse(null) != null;
     }
 
     private BroadcastReceiver mDownloadReceiver = new BroadcastReceiver() {

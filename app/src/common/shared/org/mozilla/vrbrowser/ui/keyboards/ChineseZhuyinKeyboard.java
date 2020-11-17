@@ -3,8 +3,11 @@ package org.mozilla.vrbrowser.ui.keyboards;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
-import android.util.Log;
 import android.inputmethodservice.Keyboard.Key;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.readystatesoftware.sqliteasset.SQLiteAssetHelper;
 
@@ -20,9 +23,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
-
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import jp.co.omronsoft.openwnn.ComposingText;
 import jp.co.omronsoft.openwnn.SymbolList;
@@ -83,7 +83,8 @@ public class ChineseZhuyinKeyboard extends BaseKeyboard {
 
         // If using non-Zhuyin symbols like numeric, abc, special symbols,
         // we just need to compose them.
-        if (aComposingText.matches(nonZhuyinReg)) {
+        String lastChar = "" + aComposingText.charAt(aComposingText.length() - 1);
+        if (lastChar.matches(nonZhuyinReg)) {
             CandidatesResult result = new CandidatesResult();
             result.words = getDisplays(aComposingText);
             result.action = CandidatesResult.Action.AUTO_COMPOSE;
@@ -224,17 +225,11 @@ public class ChineseZhuyinKeyboard extends BaseKeyboard {
         return mContext.getString(R.string.zhuyin_keyboard_mode_change);
     }
 
-//    private String getNonZhuyinReg() {
-//        // For characters that not belong to Zhuyin input.
-//        final String reg = "[^ㄅ-ㄩ˙ˊˇˋˉ]";
-//        return reg;
-//    }
-
     private List<Words> getDisplays(String aKey) {
         // Allow completion of uppercase/lowercase letters numbers, and symbols
         // aKey.length() > 1 only happens when switching from other keyboard.
         if (aKey.matches(nonZhuyinReg) ||
-            (aKey.length() > 1 && mKeymaps.size() == 0)) {
+                (aKey.length() > 1 && mKeymaps.size() == 0)) {
             return Collections.singletonList(new Words(1, aKey, aKey));
         }
 
@@ -242,7 +237,22 @@ public class ChineseZhuyinKeyboard extends BaseKeyboard {
         code = GetTransCode(code);
         loadKeymapIfNotLoaded(code);
         KeyMap map = mKeymaps.get(code);
-        return map != null ? map.displays : null;
+
+        if (map == null) {
+            return Collections.singletonList(new Words(1, aKey, aKey));
+        }
+        // When detecting special symbols at the last character, and
+        // because special symbols are not defined in our code book. We
+        // need to add it back to our generated word for doing following
+        // AUTO_COMPOSE.
+        final String lastChar = "" + aKey.charAt(aKey.length()-1);
+        if (map != null && lastChar.matches(nonZhuyinReg))
+        {
+            Words word = map.displays.get(0);
+            return Collections.singletonList(new Words(1,
+                    word.code + lastChar, word.value + lastChar));
+        }
+        return map.displays;
     }
 
 
@@ -469,5 +479,10 @@ public class ChineseZhuyinKeyboard extends BaseKeyboard {
         public DBPhraseHelper(Context context) {
             super(context, DATABASE_NAME, null, DATABASE_VERSION);
         }
+    }
+
+    @Override
+    public String[] getDomains(String... domains) {
+        return super.getDomains(".tw");
     }
 }

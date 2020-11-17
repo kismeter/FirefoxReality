@@ -5,10 +5,9 @@
 
 package org.mozilla.vrbrowser.ui.widgets;
 
-import android.content.ActivityNotFoundException;
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Canvas;
@@ -20,6 +19,7 @@ import android.net.Uri;
 import android.preference.PreferenceManager;
 import android.util.Log;
 import android.util.Pair;
+import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.Surface;
@@ -56,21 +56,19 @@ import org.mozilla.vrbrowser.browser.engine.SessionStore;
 import org.mozilla.vrbrowser.downloads.DownloadJob;
 import org.mozilla.vrbrowser.downloads.DownloadsManager;
 import org.mozilla.vrbrowser.telemetry.GleanMetricsService;
-import org.mozilla.vrbrowser.telemetry.TelemetryWrapper;
 import org.mozilla.vrbrowser.ui.viewmodel.WindowViewModel;
-import org.mozilla.vrbrowser.ui.views.library.BookmarksView;
-import org.mozilla.vrbrowser.ui.views.library.DownloadsView;
-import org.mozilla.vrbrowser.ui.views.library.HistoryView;
-import org.mozilla.vrbrowser.ui.views.library.LibraryView;
+import org.mozilla.vrbrowser.ui.views.library.LibraryPanel;
 import org.mozilla.vrbrowser.ui.widgets.dialogs.PromptDialogWidget;
 import org.mozilla.vrbrowser.ui.widgets.dialogs.SelectionActionWidget;
 import org.mozilla.vrbrowser.ui.widgets.menus.ContextMenuWidget;
+import org.mozilla.vrbrowser.ui.widgets.prompts.PromptData;
 import org.mozilla.vrbrowser.utils.StringUtils;
 import org.mozilla.vrbrowser.utils.UrlUtils;
 import org.mozilla.vrbrowser.utils.ViewUtils;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
@@ -104,7 +102,6 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
     private int mWidth;
     private int mHeight;
     private int mHandle;
-    private WidgetPlacement mWidgetPlacement;
     private TopBarWidget mTopBar;
     private TitleBarWidget mTitleBar;
     private WidgetManagerDelegate mWidgetManager;
@@ -121,13 +118,10 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
     private View mView;
     private Session mSession;
     private int mWindowId;
-    private BookmarksView mBookmarksView;
-    private HistoryView mHistoryView;
-    private DownloadsView mDownloadsView;
+    private LibraryPanel mLibrary;
     private Windows.WindowPlacement mWindowPlacement = Windows.WindowPlacement.FRONT;
     private Windows.WindowPlacement mWindowPlacementBeforeFullscreen = Windows.WindowPlacement.FRONT;
     private float mMaxWindowScale = 3;
-    private boolean mIsRestored = false;
     private CopyOnWriteArrayList<WindowListener> mListeners;
     boolean mActive = false;
     boolean mHovered = false;
@@ -143,7 +137,6 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
     private CopyOnWriteArrayList<Runnable> mSetViewQueuedCalls;
     private SharedPreferences mPrefs;
     private DownloadsManager mDownloadsManager;
-    private Windows.PanelType mVisiblePanelType;
 
     public interface WindowListener {
         default void onFocusRequest(@NonNull WindowWidget aWindow) {}
@@ -187,7 +180,7 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
 
         mDownloadsManager = mWidgetManager.getServicesProvider().getDownloadsManager();
 
-                // ModelView creation and observers setup
+        // ModelView creation and observers setup
         mViewModel = new ViewModelProvider(
                 (VRBrowserActivity)getContext(),
                 ViewModelProvider.AndroidViewModelFactory.getInstance(((VRBrowserActivity) getContext()).getApplication()))
@@ -200,9 +193,7 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         mListeners = new CopyOnWriteArrayList<>();
         setupListeners(mSession);
 
-        mBookmarksView = new BookmarksView(aContext);
-        mHistoryView = new HistoryView(aContext);
-        mDownloadsView = new DownloadsView(aContext);
+        mLibrary = new LibraryPanel(aContext);
 
         SessionStore.get().getBookmarkStore().addListener(mBookmarksListener);
 
@@ -228,13 +219,14 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         mPromptDelegate.attachToWindow(this);
 
         setFocusable(true);
-
-        TelemetryWrapper.openWindowEvent(mWindowId);
         GleanMetricsService.openWindowEvent(mWindowId);
 
         if (mSession.getGeckoSession() != null) {
             onCurrentSessionChange(null, mSession.getGeckoSession());
         }
+
+        mViewModel.setWidth(mWidgetPlacement.width);
+        mViewModel.setHeight(mWidgetPlacement.height);
     }
 
     @Override
@@ -312,14 +304,10 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
 
     @Override
     protected void onDismiss() {
-        if (mViewModel.getIsBookmarksVisible().getValue().get()) {
-            hidePanel(Windows.PanelType.BOOKMARKS);
-
-        } else if (mViewModel.getIsHistoryVisible().getValue().get()) {
-            hidePanel(Windows.PanelType.HISTORY);
-
-        } else if (mViewModel.getIsDownloadsVisible().getValue().get()) {
-            hidePanel(Windows.PanelType.DOWNLOADS);
+        if (mViewModel.getIsLibraryVisible().getValue().get()) {
+            if (!mLibrary.onBack()) {
+                hidePanel();
+            }
 
         } else {
             if (mSession.canGoBack()) {
@@ -351,21 +339,16 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
 
-        mHistoryView.updateUI();
-        mBookmarksView.updateUI();
-        mDownloadsView.updateUI();
+        mLibrary.onConfigurationChanged(newConfig);
 
         mViewModel.refresh();
     }
 
     public void close() {
-        TelemetryWrapper.closeWindowEvent(mWindowId);
         GleanMetricsService.closeWindowEvent(mWindowId);
         hideContextMenus();
         releaseWidget();
-        mBookmarksView.onDestroy();
-        mHistoryView.onDestroy();
-        mDownloadsView.onDestroy();
+        mLibrary.onDestroy();
         mViewModel.setIsTopBarVisible(false);
         mViewModel.setIsTitleBarVisible(false);
         SessionStore.get().destroySession(mSession);
@@ -378,10 +361,15 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
             mTitleBar.setDelegate((TitleBarWidget.Delegate) null);
         }
         mListeners.clear();
+
+        if (mPromptDelegate != null){
+            mPromptDelegate.hideAllPrompts();
+        }
     }
 
-    public void loadHomeIfNotRestored() {
-        if (!mIsRestored) {
+    public void loadHomeIfBlank() {
+        final String currentUri = mSession.getCurrentUri();
+        if ((currentUri == null) || currentUri.isEmpty() || UrlUtils.isBlankUri(getContext(), mSession.getCurrentUri())) {
             loadHome();
         }
     }
@@ -393,10 +381,6 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         } else {
             mSession.loadUri(SettingsStore.getInstance(getContext()).getHomepage());
         }
-    }
-
-    protected void setRestored(boolean restored) {
-        mIsRestored = restored;
     }
 
     private void setView(View view, boolean switchSurface) {
@@ -460,16 +444,8 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         }
     }
 
-    public boolean isBookmarksVisible() {
-        return mViewModel.getIsBookmarksVisible().getValue().get();
-    }
-
-    public boolean isHistoryVisible() {
-        return mViewModel.getIsHistoryVisible().getValue().get();
-    }
-
-    public boolean isDownloadsVisible() {
-        return mViewModel.getIsDownloadsVisible().getValue().get();
+    public boolean isLibraryVisible() {
+        return mViewModel.getIsLibraryVisible().getValue().get();
     }
 
     public int getWindowWidth() {
@@ -480,134 +456,70 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         return mWidgetPlacement.height;
     }
 
-    private void hideLibraryPanels() {
-        if (mViewModel.getIsBookmarksVisible().getValue().get()) {
-            hidePanel(Windows.PanelType.BOOKMARKS);
+    public @Windows.PanelType
+    int getSelectedPanel() {
+        return mLibrary.getSelectedPanelType();
+    }
 
-        } else if (mViewModel.getIsHistoryVisible().getValue().get()) {
-            hidePanel(Windows.PanelType.HISTORY);
-
-        } else if (mViewModel.getIsDownloadsVisible().getValue().get()) {
-            hidePanel(Windows.PanelType.DOWNLOADS);
+    private void hideLibraryPanel() {
+        if (mViewModel.getIsLibraryVisible().getValue().get()) {
+            hidePanel(true);
         }
     }
 
-    public void switchPanel(@NonNull Windows.PanelType panelType) {
-        switch (panelType) {
-            case BOOKMARKS:
-                if (mViewModel.getIsHistoryVisible().getValue().get() ||
-                        mViewModel.getIsDownloadsVisible().getValue().get()) {
-                    if (isHistoryVisible()) {
-                        hidePanel(Windows.PanelType.HISTORY, false);
-                    }
-                    if (isDownloadsVisible()) {
-                        hidePanel(Windows.PanelType.DOWNLOADS, false);
-                    }
-                    showPanel(Windows.PanelType.BOOKMARKS, false);
+    public void switchPanel(@Windows.PanelType int panelType) {
+        if (mViewModel.getIsLibraryVisible().getValue().get()) {
+            hidePanel(true);
 
-                } else if (mViewModel.getIsBookmarksVisible().getValue().get()) {
-                    hidePanel(Windows.PanelType.BOOKMARKS);
-
-                } else {
-                    showPanel(Windows.PanelType.BOOKMARKS);
-                }
-                break;
-            case HISTORY:
-                if (mViewModel.getIsBookmarksVisible().getValue().get() ||
-                        mViewModel.getIsDownloadsVisible().getValue().get()) {
-                    if (isBookmarksVisible()) {
-                        hidePanel(Windows.PanelType.BOOKMARKS, false);
-                    }
-                    if (isDownloadsVisible()) {
-                        hidePanel(Windows.PanelType.DOWNLOADS, false);
-                    }
-                    showPanel(Windows.PanelType.HISTORY, false);
-
-                } else if (mViewModel.getIsHistoryVisible().getValue().get()) {
-                    hidePanel(Windows.PanelType.HISTORY);
-
-                } else {
-                    showPanel(Windows.PanelType.HISTORY);
-                }
-                break;
-            case DOWNLOADS:
-                if (mViewModel.getIsBookmarksVisible().getValue().get() ||
-                        mViewModel.getIsHistoryVisible().getValue().get()) {
-                    if (isBookmarksVisible()) {
-                        hidePanel(Windows.PanelType.BOOKMARKS, false);
-                    }
-                    if (isHistoryVisible()) {
-                        hidePanel(Windows.PanelType.HISTORY, false);
-                    }
-                    showPanel(Windows.PanelType.DOWNLOADS, false);
-
-                } else if (mViewModel.getIsDownloadsVisible().getValue().get()) {
-                    hidePanel(Windows.PanelType.DOWNLOADS);
-
-                } else {
-                    showPanel(Windows.PanelType.DOWNLOADS);
-                }
-                break;
-            case NONE:
-                break;
+        } else {
+            showPanel(panelType, true);
         }
-    }
-
-    private void showPanel(@NonNull Windows.PanelType panelType) {
-        showPanel(panelType, true);
     }
 
     Runnable mRestoreFirstPaint;
 
-    private void showPanel(@NonNull Windows.PanelType panelType, boolean switchSurface) {
-        LibraryView libraryView = getPanelByType(panelType);
-        if (mView == null && libraryView != null) {
-            setView(libraryView, switchSurface);
-            libraryView.onShow();
-            mViewModel.setIsPanelVisible(panelType, true);
-            if (mRestoreFirstPaint == null && !isFirstPaintReady() && (mFirstDrawCallback != null) && (mSurface != null)) {
-                final Runnable firstDrawCallback = mFirstDrawCallback;
-                onFirstContentfulPaint(mSession.getGeckoSession());
-                mRestoreFirstPaint = () -> {
-                    setFirstPaintReady(false);
-                    setFirstDrawCallback(firstDrawCallback);
-                    if (mWidgetManager != null) {
-                        mWidgetManager.updateWidget(WindowWidget.this);
-                    }
-                };
-            }
+    public void showPanel(@Windows.PanelType int panelType) {
+        showPanel(panelType, true);
+    }
 
+    private void showPanel(@Windows.PanelType int panelType, boolean switchSurface) {
+        if (mLibrary != null) {
+            if (mView == null) {
+                setView(mLibrary, switchSurface);
+                mLibrary.selectPanel(panelType);
+                mLibrary.onShow();
+                mViewModel.setIsPanelVisible(true);
+                if (mRestoreFirstPaint == null && !isFirstPaintReady() && (mFirstDrawCallback != null) && (mSurface != null)) {
+                    final Runnable firstDrawCallback = mFirstDrawCallback;
+                    onFirstContentfulPaint(mSession.getGeckoSession());
+                    mRestoreFirstPaint = () -> {
+                        setFirstPaintReady(false);
+                        setFirstDrawCallback(firstDrawCallback);
+                        if (mWidgetManager != null) {
+                            mWidgetManager.updateWidget(WindowWidget.this);
+                        }
+                    };
+                }
+
+            } else if (mView == mLibrary) {
+                mLibrary.selectPanel(panelType);
+            }
         }
     }
 
-    public void hidePanel(@NonNull Windows.PanelType panelType) {
-        hidePanel(panelType, true);
+    public void hidePanel() {
+        hidePanel(true);
     }
 
-    public void hidePanel(@NonNull Windows.PanelType panelType, boolean switchSurface) {
-        LibraryView libraryView = getPanelByType(panelType);
-        if (mView != null && libraryView != null) {
-            unsetView(libraryView, switchSurface);
-            libraryView.onHide();
-            mViewModel.setIsPanelVisible(panelType, false);
+    private void hidePanel(boolean switchSurface) {
+        if (mView != null && mLibrary != null) {
+            unsetView(mLibrary, switchSurface);
+            mLibrary.onHide();
+            mViewModel.setIsPanelVisible(false);
         }
         if (switchSurface && mRestoreFirstPaint != null) {
             mRestoreFirstPaint.run();
             mRestoreFirstPaint = null;
-        }
-    }
-
-    @Nullable
-    private LibraryView getPanelByType(@NonNull Windows.PanelType panelType) {
-        switch (panelType) {
-            case BOOKMARKS:
-                return mBookmarksView;
-            case HISTORY:
-                return mHistoryView;
-            case DOWNLOADS:
-                return mDownloadsView;
-            default:
-                return null;
         }
     }
 
@@ -646,6 +558,9 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         mWidgetPlacement.width = aVideoWidth + mBorderWidth * 2;
         mWidgetPlacement.height = aVideoHeight + mBorderWidth * 2;
         mWidgetManager.updateWidget(this);
+
+        mViewModel.setWidth(mWidgetPlacement.width);
+        mViewModel.setHeight(mWidgetPlacement.height);
     }
 
     public void disableVRVideoMode() {
@@ -661,17 +576,20 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         mWidgetPlacement.width = mWidthBackup;
         mWidgetPlacement.height = mHeightBackup;
         mWidgetManager.updateWidget(this);
+
+        mViewModel.setWidth(mWidgetPlacement.width);
+        mViewModel.setHeight(mWidgetPlacement.height);
     }
 
     public void setWindowPlacement(@NonNull Windows.WindowPlacement aPlacement) {
         if (mActive) {
-            TelemetryWrapper.activePlacementEvent(mWindowPlacement.getValue(), false);
             GleanMetricsService.activePlacementEvent(mWindowPlacement.getValue(), false);
         }
         mWindowPlacement = aPlacement;
+        mViewModel.setWidth(mWidgetPlacement.width);
+        mViewModel.setHeight(mWidgetPlacement.height);
         mViewModel.setPlacement(mWindowPlacement);
         if (mActive) {
-            TelemetryWrapper.activePlacementEvent(mWindowPlacement.getValue(), true);
             GleanMetricsService.activePlacementEvent(mWindowPlacement.getValue(), true);
         }
     }
@@ -731,7 +649,6 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
 
         hideContextMenus();
 
-        TelemetryWrapper.activePlacementEvent(mWindowPlacement.getValue(), mActive);
         GleanMetricsService.activePlacementEvent(mWindowPlacement.getValue(), mActive);
         updateBorder();
 
@@ -901,6 +818,10 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
             return;
         }
 
+        if (aEvent.getAction() == MotionEvent.ACTION_SCROLL) {
+            requestFocusFromTouch();
+        }
+
         if (mView != null) {
             super.handleHoverEvent(aEvent);
 
@@ -940,6 +861,8 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         mWindowPlacement = mWindowPlacementBeforeFullscreen;
         mWidgetPlacement.copyFrom(mPlacementBeforeFullscreen);
         mWidgetPlacement.composited = composited;
+        mViewModel.setWidth(mWidgetPlacement.width);
+        mViewModel.setHeight(mWidgetPlacement.height);
     }
 
     public WidgetPlacement getBeforeFullscreenPlacement() {
@@ -952,6 +875,8 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
 
     public void restoreBeforeResizePlacement() {
         mWidgetPlacement.copyFrom(mPlacementBeforeResize);
+        mViewModel.setWidth(mWidgetPlacement.width);
+        mViewModel.setHeight(mWidgetPlacement.height);
     }
 
     public WidgetPlacement getBeforeResizePlacement() {
@@ -1010,6 +935,9 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         mWidgetPlacement.worldWidth = aWorldWidth;
         mWidgetManager.updateWidget(this);
         mWidgetManager.updateVisibleWidgets();
+
+        mViewModel.setWidth(mWidgetPlacement.width);
+        mViewModel.setHeight(mWidgetPlacement.height);
     }
 
     @Override
@@ -1084,16 +1012,12 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         }
         mWidgetPlacement.visible = aVisible;
         if (!aVisible) {
-            if (mViewModel.getIsHistoryVisible().getValue().get() ||
-                    mViewModel.getIsBookmarksVisible().getValue().get() ||
-                    mViewModel.getIsDownloadsVisible().getValue().get()) {
+            if (mViewModel.getIsLibraryVisible().getValue().get()) {
                 mWidgetManager.popWorldBrightness(this);
             }
 
         } else {
-            if (mViewModel.getIsHistoryVisible().getValue().get() ||
-                    mViewModel.getIsBookmarksVisible().getValue().get() ||
-                    mViewModel.getIsDownloadsVisible().getValue().get()) {
+            if (mViewModel.getIsLibraryVisible().getValue().get()) {
                 mWidgetManager.pushWorldBrightness(this, WidgetManagerDelegate.DEFAULT_DIM_BRIGHTNESS);
             }
         }
@@ -1116,7 +1040,15 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         setSession(aSession, SESSION_RELEASE_DISPLAY, previousSessionState);
     }
 
+    public void setSession(@NonNull Session aSession, @SetSessionActiveState int previousSessionState, boolean hidePanel) {
+        setSession(aSession, SESSION_RELEASE_DISPLAY, previousSessionState, hidePanel);
+    }
+
     public void setSession(@NonNull Session aSession, @OldSessionDisplayAction int aDisplayAction, @SetSessionActiveState int previousSessionState) {
+        setSession(aSession, SESSION_RELEASE_DISPLAY, previousSessionState, true);
+    }
+
+    public void setSession(@NonNull Session aSession, @OldSessionDisplayAction int aDisplayAction, @SetSessionActiveState int previousSessionState, boolean hidePanel) {
         if (mSession != aSession) {
             Session oldSession = mSession;
             if (oldSession != null) {
@@ -1136,17 +1068,23 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
 
             mViewModel.setIsPrivateSession(mSession.isPrivateMode());
 
-            if (oldSession != null) {
-                onCurrentSessionChange(oldSession.getGeckoSession(), aSession.getGeckoSession());
-            } else {
-                onCurrentSessionChange(null, aSession.getGeckoSession());
+            if (hidePanel) {
+                if (oldSession != null) {
+                    onCurrentSessionChange(oldSession.getGeckoSession(), aSession.getGeckoSession());
+                } else {
+                    onCurrentSessionChange(null, aSession.getGeckoSession());
+                }
             }
+
             for (WindowListener listener: mListeners) {
                 listener.onSessionChanged(oldSession, aSession);
             }
         }
         mCaptureOnPageStop = false;
-        hideLibraryPanels();
+
+        if (hidePanel) {
+            hideLibraryPanel();
+        }
     }
 
     public void setDrmUsed(boolean isEnabled) {
@@ -1205,7 +1143,6 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
     public void onUnstackSession(Session aSession, Session aParent) {
         if (mSession == aSession) {
             setSession(aParent, WindowWidget.DEACTIVATE_CURRENT_SESSION);
-            SessionStore.get().destroySession(aSession);
         }
     }
 
@@ -1293,7 +1230,7 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         }
     }
 
-    public void showAlert(String title, @NonNull String msg, @Nullable PromptDialogWidget.Delegate callback) {
+    public void showAlert(String title, String msg, @Nullable PromptDialogWidget.Delegate callback) {
         if (mAlertDialog == null) {
             mAlertDialog = new PromptDialogWidget(getContext());
             mAlertDialog.setButtons(new int[] {
@@ -1321,50 +1258,61 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         mAlertDialog.show(REQUEST_FOCUS);
     }
 
+    public void hideConfirmPrompt() {
+        if (mConfirmDialog != null) {
+            mConfirmDialog.onDismiss();
+        }
+    }
+
     public void showConfirmPrompt(@NonNull String title,
-                                  @NonNull String msg,
+                                  String msg,
                                   @NonNull String[] btnMsg,
                                   @Nullable PromptDialogWidget.Delegate callback) {
-        showConfirmPrompt(-1,
-                title,
-                msg,
-                btnMsg,
-                null,
-                callback);
+        PromptData data = new PromptData.Builder()
+                .withTitle(title)
+                .withBody(msg)
+                .withBtnMsg(btnMsg)
+                .withCallback(callback)
+                .build();
+        showConfirmPrompt(data);
     }
 
     public void showConfirmPrompt(@DrawableRes int icon,
                                   @NonNull String title,
-                                  @NonNull String msg,
+                                  String msg,
                                   @NonNull String[] btnMsg,
                                   @Nullable PromptDialogWidget.Delegate callback) {
-        showConfirmPrompt(icon,
-                title,
-                msg,
-                btnMsg,
-                null,
-                callback);
+        PromptData data = new PromptData.Builder()
+                .withIconRes(icon)
+                .withTitle(title)
+                .withBody(msg)
+                .withBtnMsg(btnMsg)
+                .withCallback(callback)
+                .build();
+        showConfirmPrompt(data);
     }
 
     public void showConfirmPrompt(@NonNull String title,
-                                  @NonNull String msg,
+                                  String msg,
                                   @NonNull String[] btnMsg,
                                   @NonNull String checkBoxText,
                                   @Nullable PromptDialogWidget.Delegate callback) {
-        showConfirmPrompt(-1,
-                title,
-                msg,
-                btnMsg,
-                checkBoxText,
-                callback);
+        PromptData data = new PromptData.Builder()
+                .withTitle(title)
+                .withBody(msg)
+                .withBtnMsg(btnMsg)
+                .withCheckboxText(checkBoxText)
+                .withCallback(callback)
+                .build();
+        showConfirmPrompt(data);
     }
 
-    public void showConfirmPrompt(@DrawableRes int icon,
-                                  @NonNull String title,
-                                  @NonNull String msg,
-                                  @NonNull String[] btnMsg,
-                                  @Nullable String checkBoxText,
-                                  @Nullable PromptDialogWidget.Delegate callback) {
+    public void showConfirmPrompt(@NonNull PromptData promptData) {
+        mConfirmDialog = confirmPrompt(promptData);
+        mConfirmDialog.show(REQUEST_FOCUS);
+    }
+
+    private PromptDialogWidget confirmPrompt(@NonNull PromptData promptData) {
         if (mConfirmDialog == null) {
             mConfirmDialog = new PromptDialogWidget(getContext());
             mConfirmDialog.setButtons(new int[] {
@@ -1372,33 +1320,43 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
                     R.string.ok_button
             });
             mConfirmDialog.setCheckboxVisible(false);
-            if (checkBoxText != null) {
-                mConfirmDialog.setCheckboxVisible(true);
-                mConfirmDialog.setCheckboxText(checkBoxText);
-            }
-            if (icon != -1) {
-                mConfirmDialog.setIcon(icon);
-            }
             mConfirmDialog.setDescriptionVisible(false);
         }
-        mConfirmDialog.setTitle(title);
-        mConfirmDialog.setBody(msg);
-        mConfirmDialog.setButtons(btnMsg);
+        mConfirmDialog.setTitle(promptData.getTitle());
+        mConfirmDialog.setBody(promptData.getBody());
+        if (promptData.getBodyGravity() != Gravity.NO_GRAVITY) {
+            mConfirmDialog.setBodyGravity(promptData.getBodyGravity());
+        }
+        mConfirmDialog.setButtons(promptData.getBtnMsg());
         mConfirmDialog.setButtonsDelegate((index, isChecked) -> {
             mConfirmDialog.hide(REMOVE_WIDGET);
-            if (callback != null) {
-                callback.onButtonClicked(index, isChecked);
+            if (promptData.getCallback() != null) {
+                promptData.getCallback().onButtonClicked(index, isChecked);
             }
             mConfirmDialog.releaseWidget();
             mConfirmDialog = null;
         });
+        if (promptData.getCheckboxText() != null) {
+            mConfirmDialog.setCheckboxVisible(true);
+            mConfirmDialog.setCheckboxText(promptData.getCheckboxText());
+
+        } else {
+            mConfirmDialog.setCheckboxVisible(false);
+        }
+        if (promptData.getIconType() == PromptData.RES) {
+            mConfirmDialog.setIcon(promptData.getIconRes());
+
+        } else if (promptData.getIconType() == PromptData.URL) {
+            mConfirmDialog.setIcon(promptData.getIconUrl());
+        }
         mConfirmDialog.setLinkDelegate((widget, url) ->  {
             mWidgetManager.openNewTabForeground(url);
             mConfirmDialog.hide(REMOVE_WIDGET);
             mConfirmDialog.releaseWidget();
             mConfirmDialog = null;
         });
-        mConfirmDialog.show(REQUEST_FOCUS);
+
+        return mConfirmDialog;
     }
 
     public void showDialog(@NonNull String title, @StringRes int  description, @NonNull  @StringRes int [] btnMsg,
@@ -1459,6 +1417,9 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
                 mWidgetPlacement.worldWidth = maxSize.first;
                 mWidgetPlacement.width = getWindowWidth(maxSize.first);
                 mWidgetPlacement.height = (int) Math.ceil((float)mWidgetPlacement.width / currentAspect);
+
+                mViewModel.setWidth(mWidgetPlacement.width);
+                mViewModel.setHeight(mWidgetPlacement.height);
             }
         }
     }
@@ -1492,17 +1453,17 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
     private NavigationBarWidget.NavigationListener mNavigationBarListener = new NavigationBarWidget.NavigationListener() {
         @Override
         public void onBack() {
-            hideLibraryPanels();
+            hideLibraryPanel();
         }
 
         @Override
         public void onForward() {
-            hideLibraryPanels();
+            hideLibraryPanel();
         }
 
         @Override
         public void onReload() {
-            hideLibraryPanels();
+            hideLibraryPanel();
         }
 
         @Override
@@ -1512,7 +1473,7 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
 
         @Override
         public void onHome() {
-            hideLibraryPanels();
+            hideLibraryPanel();
         }
     };
 
@@ -1564,8 +1525,8 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
             mSelectionMenu = null;
         }
 
-        if (mWidgetPlacement.tintColor != 0xFFFFFFFF) {
-            mWidgetPlacement.tintColor = 0xFFFFFFFF;
+        if (mWidgetPlacement.tintColor != Windows.WHITE) {
+            mWidgetPlacement.tintColor = Windows.WHITE;
             mWidgetManager.updateWidget(this);
         }
     }
@@ -1605,8 +1566,8 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
                         @Override
                         public void reject() {
                             mWidgetManager.getFocusedWindow().showAlert(
-                                    "Permission error",
-                                    "External storage write permission is required to download files to the external storage",
+                                    getContext().getString(R.string.download_error_title_v1),
+                                    getContext().getString(R.string.download_error_external_storage),
                                     null
                             );
                         }
@@ -1630,6 +1591,12 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
     }
 
     @Override
+    public void onCloseRequest(@NonNull GeckoSession geckoSession) {
+        Session session = SessionStore.get().getSession(geckoSession);
+        mWidgetManager.getWindows().onTabsClose(Collections.singletonList(session));
+    }
+
+    @Override
     public void onContextMenu(GeckoSession session, int screenX, int screenY, ContextElement element) {
         hideContextMenus();
 
@@ -1648,7 +1615,7 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         }
         mContextMenu.show(REQUEST_FOCUS);
 
-        mWidgetPlacement.tintColor = 0x555555FF;
+        mWidgetPlacement.tintColor = Windows.GRAY;
         mWidgetManager.updateWidget(this);
     }
 
@@ -1711,7 +1678,7 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
                             if (index == PromptDialogWidget.POSITIVE) {
                                 try {
                                     getContext().startActivity(newIntent);
-                                } catch (ActivityNotFoundException ignored) {
+                                } catch (Exception ignored) {
                                     showAlert(
                                             getResources().getString(R.string.download_open_file_error_title),
                                             getResources().getString(R.string.download_open_file_error_body),
@@ -1804,6 +1771,13 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
 
     @Override
     public void onLocationChange(@NonNull GeckoSession session, @Nullable String url) {
+        if (mPromptDelegate != null &&
+                mViewModel.getUrl().getValue() != null &&
+                UrlUtils.getHost(url) != null &&
+                !UrlUtils.getHost(url).equals(UrlUtils.getHost(mViewModel.getUrl().getValue().toString()))){
+            mPromptDelegate.hideAllPrompts();
+        }
+
         mViewModel.setUrl(url);
         mViewModel.setIsDrmUsed(false);
         mViewModel.setIsMediaAvailable(false);
@@ -1837,20 +1811,23 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         Uri uri = Uri.parse(aRequest.uri);
         if (UrlUtils.isAboutPage(uri.toString())) {
             if(UrlUtils.isBookmarksUrl(uri.toString())) {
-                showPanel(Windows.PanelType.BOOKMARKS);
+                showPanel(Windows.BOOKMARKS);
 
             } else if (UrlUtils.isHistoryUrl(uri.toString())) {
-                showPanel(Windows.PanelType.HISTORY);
+                showPanel(Windows.HISTORY);
 
             } else if (UrlUtils.isDownloadsUrl(uri.toString())) {
-                showPanel(Windows.PanelType.DOWNLOADS);
+                showPanel(Windows.DOWNLOADS);
+
+            } else if (UrlUtils.isAddonsUrl(uri.toString())) {
+                showPanel(Windows.ADDONS);
 
             } else {
-                hideLibraryPanels();
+                hideLibraryPanel();
             }
             
         } else {
-            hideLibraryPanels();
+            hideLibraryPanel();
         }
 
         if ("file".equalsIgnoreCase(uri.getScheme()) &&
@@ -2022,6 +1999,7 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
         hideContextMenus();
         mSelectionMenu = new SelectionActionWidget(getContext());
         mSelectionMenu.mWidgetPlacement.parentHandle = getHandle();
+        mSelectionMenu.setSelectionText(aSelection.text);
         mSelectionMenu.setActions(aSelection.availableActions);
         Matrix matrix = new Matrix();
         aSession.getClientToSurfaceMatrix(matrix);
@@ -2043,7 +2021,11 @@ public class WindowWidget extends UIWidget implements SessionChangeListener,
                 hideContextMenus();
                 if (aSelection.isActionAvailable(action)) {
                     aSelection.execute(action);
+
+                } else if (aSelection.isActionAvailable(GeckoSession.SelectionActionDelegate.ACTION_UNSELECT)) {
+                    aSelection.unselect();
                 }
+
                 if (GeckoSession.SelectionActionDelegate.ACTION_COPY.equals(action) &&
                         aSelection.isActionAvailable(GeckoSession.SelectionActionDelegate.ACTION_UNSELECT)) {
                     // Don't keep the text selected after it's copied.

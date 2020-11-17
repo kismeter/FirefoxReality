@@ -98,6 +98,7 @@ public interface WidgetManagerDelegate {
     void removeWebXRListener(WebXRListener aListener);
     void setWebXRIntersitialState(@WebXRInterstitialState int aState);
     boolean isWebXRIntersitialHidden();
+    boolean isWebXRPresenting();
     boolean isPermissionGranted(@NonNull String permission);
     void requestPermission(String uri, @NonNull String permission, GeckoSession.PermissionDelegate.Callback aCallback);
     boolean canOpenNewWindow();
@@ -108,8 +109,6 @@ public interface WidgetManagerDelegate {
     TrayWidget getTray();
     NavigationBarWidget getNavigationBar();
     Windows getWindows();
-    void addConnectivityListener(ConnectivityReceiver.Delegate aListener);
-    void removeConnectivityListener(ConnectivityReceiver.Delegate aListener);
     void saveState();
     void updateLocale(@NonNull Context context);
     @NonNull

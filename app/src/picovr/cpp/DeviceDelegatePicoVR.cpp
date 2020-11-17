@@ -57,6 +57,7 @@ struct DeviceDelegatePicoVR::State {
     float axisY = 0;
     ElbowModel::HandEnum hand;
     int hapticFrameID = 0;
+    int battery = -1;
     Controller()
         : index(-1)
         , created(false)
@@ -223,7 +224,11 @@ struct DeviceDelegatePicoVR::State {
         }
       } else {
         const int32_t kNumAxes = 2;
-        float axes[kNumAxes] = { controller.axisX , -controller.axisY };
+        float axes[kNumAxes] = { 0.0f, 0.0f };
+        if (controller.touched) {
+          axes[device::kImmersiveAxisTouchpadX] = (2.0f * controller.axisX) - 1.0f;
+          axes[device::kImmersiveAxisTouchpadY] = (2.0f * controller.axisY) - 1.0f;
+        }
         controllerDelegate->SetAxes(i, axes, controller.index != GazeModeIndex() ? kNumAxes : 0);
 
         if (controller.touched) {
@@ -251,6 +256,8 @@ struct DeviceDelegatePicoVR::State {
       }
 
       controllerDelegate->SetTransform(i, transform);
+
+      controllerDelegate->SetBatteryLevel(i, controller.battery);
 
       if (controllerDelegate->GetHapticCount(i)) {
         UpdateHaptics(controllers[i]);
@@ -364,7 +371,7 @@ DeviceDelegatePicoVR::SetControllerDelegate(ControllerDelegatePtr& aController) 
       if (m.type == k6DofHeadSet) {
         vrb::Matrix beam = vrb::Matrix::Rotation(vrb::Vector(1.0f, 0.0f, 0.0f), -vrb::PI_FLOAT / 11.5f);
         beam.TranslateInPlace(vrb::Vector(0.0f, 0.012f, -0.06f));
-        m.controllerDelegate->CreateController(index, int32_t(controller.hand), controller.IsRightHand() ? "Pico Neo 2 (Right)" : "Pico Neo 2 (LEFT)", beam);
+        m.controllerDelegate->CreateController(index, int32_t(controller.hand), controller.IsRightHand() ? "Pico Neo 2 (Right)" : "Pico Neo 2 (Left)", beam);
         m.controllerDelegate->SetButtonCount(index, kNumButtons);
         m.controllerDelegate->SetHapticCount(index, 1);
         m.controllerDelegate->SetControllerType(index, device::PicoNeo2);
@@ -540,7 +547,6 @@ DeviceDelegatePicoVR::UpdateControllerConnected(const int aIndex, const bool aCo
     controller.enabled = aConnected;
     m.controllerDelegate->SetLeftHanded(aIndex, !controller.IsRightHand());
     m.controllerDelegate->SetEnabled(aIndex, aConnected);
-    m.controllerDelegate->SetVisible(aIndex, aConnected);
     if (m.focusIndex == aIndex) {
       m.controllerDelegate->SetFocused(aIndex);
       m.focusIndex = -1; // Do not set focus again;
@@ -564,6 +570,11 @@ DeviceDelegatePicoVR::UpdateControllerButtons(const int aIndex, const int32_t aB
   m.controllers[aIndex].axisX = axisX;
   m.controllers[aIndex].axisY = axisY;
   m.controllers[aIndex].touched = touched;
+}
+
+void
+DeviceDelegatePicoVR::UpdateControllerBatteryLevel(const int aIndex, const int aBatteryLevel) {
+  m.controllers[aIndex].battery = aBatteryLevel;
 }
 
 void

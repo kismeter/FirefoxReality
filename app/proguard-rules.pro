@@ -52,6 +52,8 @@
 -keep class org.mozilla.vrbrowser.ui.widgets.WidgetPlacement {*;} # Keep class used in JNI.
 -keep class org.mozilla.vrbrowser.ui.widgets.Windows$** {*;} # Keep state clases used by gson.
 -keep class org.mozilla.vrbrowser.browser.engine.** {*;} # Keep state clases used by gson.
+-keep class org.mozilla.vrbrowser.utils.RemoteProperties {*;} # Keep state clases used by gson.
+-keep class org.mozilla.vrbrowser.utils.Environment {*;} # Keep state clases used by gson.
 
 # --------------------------------------------------------------------
 # Keep classes from HTC SDK

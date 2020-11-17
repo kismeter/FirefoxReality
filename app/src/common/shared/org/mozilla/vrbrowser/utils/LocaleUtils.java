@@ -214,7 +214,11 @@ public class LocaleUtils {
 
     public static Language getVoiceSearchLanguage(@NonNull Context aContext) {
         String languageId = getVoiceSearchLanguageId(aContext);
-        return mSupportedLanguagesCache.get(languageId);
+        Language language = mSupportedLanguagesCache.get(languageId);
+        if (language == null) {
+            language = mSupportedLanguagesCache.get(FALLBACK_LANGUAGE_TAG);
+        }
+        return language;
     }
 
     public static void setVoiceSearchLanguageId(@NonNull Context context, @NonNull String languageId) {
@@ -245,7 +249,11 @@ public class LocaleUtils {
 
     public static Language getDisplayLanguage(@NonNull Context aContext) {
         String languageId = getDisplayLanguageId(aContext);
-        return mSupportedLanguagesCache.get(languageId);
+        Language language = mSupportedLanguagesCache.get(languageId);
+        if (language == null) {
+            language = mSupportedLanguagesCache.get(FALLBACK_LANGUAGE_TAG);
+        }
+        return language;
     }
 
     public static void setDisplayLanguageId(@NonNull Context context, @NonNull String languageId) {
@@ -285,7 +293,7 @@ public class LocaleUtils {
     private static Map<String, Language> getSupportedLocalizedLanguages(@NonNull Context context) {
         mSupportedLanguagesCache = new LinkedHashMap<String, Language>() {{
             Locale locale = new Locale("en","US");
-            put(locale.toLanguageTag(), new Language(locale, StringUtils.getStringByLocale(context, R.string.settings_language_english, locale)));
+            put(locale.toLanguageTag(), new Language(locale, StringUtils.getStringByLocale(context, R.string.settings_language_english_us, locale)));
             locale = new Locale("en","GB");
             put(locale.toLanguageTag(), new Language(locale, StringUtils.getStringByLocale(context, R.string.settings_language_english_uk, locale)));
             locale = new Locale.Builder().setLanguage("zh").setScript("Hant").setRegion("TW").build();

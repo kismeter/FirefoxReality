@@ -2,7 +2,6 @@ package org.mozilla.vrbrowser.browser;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.database.Observable;
 import android.graphics.Color;
 import android.os.StrictMode;
 import android.preference.PreferenceManager;
@@ -10,30 +9,41 @@ import android.util.Log;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
-import androidx.databinding.ObservableBoolean;
-import androidx.lifecycle.Observer;
+import androidx.annotation.Nullable;
 import androidx.lifecycle.ViewModelProvider;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.reflect.TypeToken;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.mozilla.geckoview.ContentBlocking;
 import org.mozilla.geckoview.GeckoSessionSettings;
-import org.mozilla.telemetry.TelemetryHolder;
 import org.mozilla.vrbrowser.BuildConfig;
 import org.mozilla.vrbrowser.R;
 import org.mozilla.vrbrowser.VRBrowserActivity;
+import org.mozilla.vrbrowser.VRBrowserApplication;
+import org.mozilla.vrbrowser.browser.engine.EngineProvider;
 import org.mozilla.vrbrowser.telemetry.GleanMetricsService;
-import org.mozilla.vrbrowser.telemetry.TelemetryWrapper;
 import org.mozilla.vrbrowser.ui.viewmodel.SettingsViewModel;
 import org.mozilla.vrbrowser.ui.widgets.menus.library.SortingContextMenuWidget;
 import org.mozilla.vrbrowser.utils.DeviceType;
+import org.mozilla.vrbrowser.utils.RemoteProperties;
 import org.mozilla.vrbrowser.utils.StringUtils;
 import org.mozilla.vrbrowser.utils.SystemUtils;
 
+import java.io.IOException;
+import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+
+import mozilla.components.concept.fetch.Request;
+import mozilla.components.concept.fetch.Response;
 
 import static org.mozilla.vrbrowser.utils.ServoUtils.isServoAvailable;
 
@@ -94,14 +104,20 @@ public class SettingsStore {
     public final static boolean WEBXR_ENABLED_DEFAULT = true;
     public final static boolean TELEMETRY_STATUS_UPDATE_SENT_DEFAULT = false;
     public final static boolean BOOKMARKS_SYNC_DEFAULT = true;
+    public final static boolean LOGIN_SYNC_DEFAULT = true;
     public final static boolean HISTORY_SYNC_DEFAULT = true;
     public final static boolean WHATS_NEW_DISPLAYED = false;
     public final static long FXA_LAST_SYNC_NEVER = 0;
     public final static boolean RESTORE_TABS_ENABLED = true;
     public final static boolean BYPASS_CACHE_ON_RELOAD = false;
-    public final static boolean MULTI_E10S = false;
     public final static int DOWNLOADS_STORAGE_DEFAULT = INTERNAL;
     public final static int DOWNLOADS_SORTING_ORDER_DEFAULT = SortingContextMenuWidget.SORT_DATE_ASC;
+    public final static boolean AUTOCOMPLETE_ENABLED = true;
+    public final static boolean WEBGL_OUT_OF_PROCESS = false;
+    public final static int PREFS_LAST_RESET_VERSION_CODE = 0;
+    public final static boolean PASSWORDS_ENCRYPTION_KEY_GENERATED = false;
+    public final static boolean AUTOFILL_ENABLED = true;
+    public final static boolean LOGIN_AUTOCOMPLETE_ENABLED = true;
 
     // Enable telemetry by default (opt-out).
     public final static boolean CRASH_REPORTING_DEFAULT = false;
@@ -124,7 +140,49 @@ public class SettingsStore {
                 (VRBrowserActivity)context,
                 ViewModelProvider.AndroidViewModelFactory.getInstance(((VRBrowserActivity) context).getApplication()))
                 .get(SettingsViewModel.class);
+
+        // Setup the stored properties until we get updated ones
+        String json = mPrefs.getString(mContext.getString(R.string.settings_key_remote_props), null);
+        mSettingsViewModel.setProps(json);
+
         mSettingsViewModel.refresh();
+
+        update();
+    }
+
+    /**
+     * Synchronizes the remote properties with the settings storage and notifies the model.
+     * Any consumer listening to the SettingsViewModel will get notified of the properties updates.
+     */
+    private void update() {
+        ((VRBrowserApplication) mContext.getApplicationContext()).getExecutors().backgroundThread().post(() -> {
+            Request request = new Request(
+                    BuildConfig.PROPS_ENDPOINT,
+                    Request.Method.GET,
+                    null,
+                    null,
+                    null,
+                    null,
+                    Request.Redirect.FOLLOW,
+                    Request.CookiePolicy.INCLUDE,
+                    false
+            );
+
+            try {
+                Response response = EngineProvider.INSTANCE.getDefaultClient(mContext).fetch(request);
+                if (response.getStatus() == 200) {
+                    String json = response.getBody().string(StandardCharsets.UTF_8);
+                    SharedPreferences.Editor editor = mPrefs.edit();
+                    editor.putString(mContext.getString(R.string.settings_key_remote_props), json);
+                    editor.commit();
+
+                    mSettingsViewModel.setProps(json);
+                }
+
+            } catch (IOException e) {
+                Log.d(LOGTAG, "Remote properties error: " + e.getLocalizedMessage());
+            }
+        });
     }
 
     public boolean isCrashReportingEnabled() {
@@ -153,23 +211,8 @@ public class SettingsStore {
         editor.putBoolean(mContext.getString(R.string.settings_key_telemetry), isEnabled);
         editor.commit();
 
-        // We send before disabling in case of opting-out
-        if (!isEnabled) {
-            TelemetryWrapper.telemetryStatus(false);
-        }
-
-        // If the state of Telemetry is not the same, we reinitialize it.
-        final boolean hasEnabled = isTelemetryEnabled();
-        if (hasEnabled != isEnabled) {
-            TelemetryWrapper.init(mContext);
-        }
-
-        TelemetryHolder.get().getConfiguration().setUploadEnabled(isEnabled);
-        TelemetryHolder.get().getConfiguration().setCollectionEnabled(isEnabled);
-
         // We send after enabling in case of opting-in
         if (isEnabled) {
-            TelemetryWrapper.telemetryStatus(true);
             GleanMetricsService.start();
         } else {
             GleanMetricsService.stop();
@@ -709,16 +752,6 @@ public class SettingsStore {
         return mPrefs.getBoolean(mContext.getString(R.string.settings_key_bypass_cache_on_reload), BYPASS_CACHE_ON_RELOAD);
     }
 
-    public void setMultiE10s(boolean isEnabled) {
-        SharedPreferences.Editor editor = mPrefs.edit();
-        editor.putBoolean(mContext.getString(R.string.settings_key_multi_e10s), isEnabled);
-        editor.commit();
-    }
-
-    public boolean isMultiE10s() {
-        return mPrefs.getBoolean(mContext.getString(R.string.settings_key_multi_e10s), MULTI_E10S);
-    }
-
     public void setDownloadsStorage(@Storage int storage) {
         SharedPreferences.Editor editor = mPrefs.edit();
         editor.putInt(mContext.getString(R.string.settings_key_downloads_external), storage);
@@ -738,5 +771,109 @@ public class SettingsStore {
     public @Storage int getDownloadsSortingOrder() {
         return mPrefs.getInt(mContext.getString(R.string.settings_key_downloads_sorting_order), DOWNLOADS_SORTING_ORDER_DEFAULT);
     }
-}
 
+    public void setRemotePropsVersionName(String versionName) {
+        SharedPreferences.Editor editor = mPrefs.edit();
+        editor.putString(mContext.getString(R.string.settings_key_remote_props_version_name), versionName);
+        editor.commit();
+
+        mSettingsViewModel.setPropsVersionName(versionName);
+    }
+
+    public String getRemotePropsVersionName() {
+        return mPrefs.getString(mContext.getString(R.string.settings_key_remote_props_version_name), "0");
+    }
+
+    public void setAutocompleteEnabled(boolean isEnabled) {
+        SharedPreferences.Editor editor = mPrefs.edit();
+        editor.putBoolean(mContext.getString(R.string.settings_key_autocomplete), isEnabled);
+        editor.commit();
+    }
+
+    public boolean isAutocompleteEnabled() {
+        return mPrefs.getBoolean(mContext.getString(R.string.settings_key_autocomplete), AUTOCOMPLETE_ENABLED);
+    }
+
+    public void setWebGLOutOfProcess(boolean isEnabled) {
+        SharedPreferences.Editor editor = mPrefs.edit();
+        editor.putBoolean(mContext.getString(R.string.settings_key_webgl_out_of_process), isEnabled);
+        editor.commit();
+    }
+
+    public boolean isWebGLOutOfProcess() {
+        return mPrefs.getBoolean(mContext.getString(R.string.settings_key_webgl_out_of_process), WEBGL_OUT_OF_PROCESS);
+    }
+
+    public int getPrefsLastResetVersionCode() {
+        return mPrefs.getInt(mContext.getString(R.string.settings_key_prefs_last_reset_version_code), PREFS_LAST_RESET_VERSION_CODE);
+    }
+
+    public void setPrefsLastResetVersionCode(int versionCode) {
+        SharedPreferences.Editor editor = mPrefs.edit();
+        editor.putInt(mContext.getString(R.string.settings_key_prefs_last_reset_version_code), versionCode);
+        editor.commit();
+    }
+
+    @Nullable
+    public Map<String, RemoteProperties> getRemoteProperties() {
+        String json = mPrefs.getString(mContext.getString(R.string.settings_key_remote_props), null);
+
+        Gson gson = new GsonBuilder().create();
+        Type type = new TypeToken<Map<String, RemoteProperties>>() {}.getType();
+
+        Map<String, RemoteProperties> propertiesMap = null;
+        try {
+            propertiesMap = gson.fromJson(json, type);
+
+        } catch (Exception ignored) { }
+
+        return propertiesMap;
+    }
+    
+    public void setRemoteProperties(@Nullable String json) {
+        SharedPreferences.Editor editor = mPrefs.edit();
+        editor.putString(mContext.getString(R.string.settings_key_remote_props), json);
+        editor.commit();
+    }
+
+    public void recordPasswordsEncryptionKeyGenerated() {
+        SharedPreferences.Editor editor = mPrefs.edit();
+        editor.putBoolean(mContext.getString(R.string.settings_key_passwords_encryption_key_generated), true);
+        editor.commit();
+    }
+
+    public boolean isPasswordsEncryptionKeyGenerated() {
+        return mPrefs.getBoolean(mContext.getString(R.string.settings_key_passwords_encryption_key_generated), PASSWORDS_ENCRYPTION_KEY_GENERATED);
+    }
+
+    public void setAutoFillEnabled(boolean isEnabled) {
+        SharedPreferences.Editor editor = mPrefs.edit();
+        editor.putBoolean(mContext.getString(R.string.settings_key_autofill_enabled), isEnabled);
+        editor.commit();
+    }
+
+    public boolean isAutoFillEnabled() {
+        return mPrefs.getBoolean(mContext.getString(R.string.settings_key_autofill_enabled), AUTOFILL_ENABLED);
+    }
+
+    public void setLoginAutocompleteEnabled(boolean isEnabled) {
+        SharedPreferences.Editor editor = mPrefs.edit();
+        editor.putBoolean(mContext.getString(R.string.settings_key_login_autocomplete_enabled), isEnabled);
+        editor.commit();
+    }
+
+    public boolean isLoginAutocompleteEnabled() {
+        return mPrefs.getBoolean(mContext.getString(R.string.settings_key_login_autocomplete_enabled), LOGIN_AUTOCOMPLETE_ENABLED);
+    }
+
+    public void setLoginSyncEnabled(boolean isEnabled) {
+        SharedPreferences.Editor editor = mPrefs.edit();
+        editor.putBoolean(mContext.getString(R.string.settings_key_login_sync_enabled), isEnabled);
+        editor.commit();
+    }
+
+    public boolean isLoginSyncEnabled() {
+        return mPrefs.getBoolean(mContext.getString(R.string.settings_key_login_sync_enabled), LOGIN_SYNC_DEFAULT);
+    }
+
+}

@@ -5,17 +5,17 @@
 package org.mozilla.vrbrowser.browser.engine
 
 import android.content.Context
-import org.mozilla.geckoview.*
+import org.mozilla.geckoview.ContentBlocking
+import org.mozilla.geckoview.GeckoRuntime
+import org.mozilla.geckoview.GeckoRuntimeSettings
+import org.mozilla.geckoview.GeckoWebExecutor
 import org.mozilla.vrbrowser.BuildConfig
 import org.mozilla.vrbrowser.browser.SettingsStore
 import org.mozilla.vrbrowser.browser.content.TrackingProtectionPolicy
 import org.mozilla.vrbrowser.browser.content.TrackingProtectionStore
 import org.mozilla.vrbrowser.crashreporting.CrashReporterService
-import java.util.concurrent.CompletableFuture
 
 object EngineProvider {
-
-    private val WEB_EXTENSIONS = arrayOf("webcompat_vimeo", "webcompat_youtube")
 
     private var runtime: GeckoRuntime? = null
     private var executor: GeckoWebExecutor? = null
@@ -25,25 +25,26 @@ object EngineProvider {
     fun getOrCreateRuntime(context: Context): GeckoRuntime {
         if (runtime == null) {
             val builder = GeckoRuntimeSettings.Builder()
+            val settingsStore = SettingsStore.getInstance(context)
 
             val policy : TrackingProtectionPolicy = TrackingProtectionStore.getTrackingProtectionPolicy(context);
             builder.crashHandler(CrashReporterService::class.java)
             builder.contentBlocking(ContentBlocking.Settings.Builder()
                     .antiTracking(policy.antiTrackingPolicy)
-                    .enhancedTrackingProtectionLevel(SettingsStore.getInstance(context).trackingProtectionLevel)
+                    .enhancedTrackingProtectionLevel(settingsStore.trackingProtectionLevel)
                     .build())
-            builder.displayDensityOverride(SettingsStore.getInstance(context).displayDensity)
-            builder.remoteDebuggingEnabled(SettingsStore.getInstance(context).isRemoteDebuggingEnabled)
-            builder.displayDpiOverride(SettingsStore.getInstance(context).displayDpi)
-            builder.screenSizeOverride(SettingsStore.getInstance(context).maxWindowWidth,
-                    SettingsStore.getInstance(context).maxWindowHeight)
+            builder.displayDensityOverride(settingsStore.displayDensity)
+            builder.remoteDebuggingEnabled(settingsStore.isRemoteDebuggingEnabled)
+            builder.displayDpiOverride(settingsStore.displayDpi)
+            builder.screenSizeOverride(settingsStore.maxWindowWidth, settingsStore.maxWindowHeight)
             builder.useMultiprocess(true)
             builder.inputAutoZoomEnabled(false)
             builder.doubleTapZoomingEnabled(false)
-            builder.debugLogging(SettingsStore.getInstance(context).isDebugLoggingEnabled)
-            builder.consoleOutput(SettingsStore.getInstance(context).isDebugLoggingEnabled)
+            builder.debugLogging(settingsStore.isDebugLoggingEnabled)
+            builder.consoleOutput(settingsStore.isDebugLoggingEnabled)
+            builder.loginAutofillEnabled(settingsStore.isAutoFillEnabled)
 
-            if (SettingsStore.getInstance(context).transparentBorderWidth > 0) {
+            if (settingsStore.transparentBorderWidth > 0) {
                 builder.useMaxScreenDepth(true)
             }
 
@@ -58,32 +59,29 @@ object EngineProvider {
         return runtime!!
     }
 
-    fun loadExtensions() : CompletableFuture<Void> {
-        val futures : List<CompletableFuture<Void>> = WEB_EXTENSIONS.map {
-            val future = CompletableFuture<Void>()
-            val url = "resource://android/assets/web_extensions/$it/"
-            runtime!!.webExtensionController.installBuiltIn(url).accept {
-                future.complete(null)
-            }
-            future
-        }
-        return CompletableFuture.allOf(*futures.toTypedArray())
+    @Synchronized
+    fun isRuntimeCreated(): Boolean {
+        return runtime != null
     }
 
-    fun createGeckoWebExecutor(context: Context): GeckoWebExecutor {
+    private fun createGeckoWebExecutor(context: Context): GeckoWebExecutor {
         return GeckoWebExecutor(getOrCreateRuntime(context))
     }
 
-    fun getDefaultGeckoWebExecutor(context: Context): GeckoWebExecutor {
+     fun getDefaultGeckoWebExecutor(context: Context): GeckoWebExecutor {
         if (executor == null) {
             executor = createGeckoWebExecutor(context)
+            client?.let { it.executor = executor }
+
         }
 
         return executor!!
     }
 
     fun createClient(context: Context): GeckoViewFetchClient {
-        return GeckoViewFetchClient(context)
+        val client = GeckoViewFetchClient(context)
+        client.executor = executor
+        return client
     }
 
     fun getDefaultClient(context: Context): GeckoViewFetchClient {

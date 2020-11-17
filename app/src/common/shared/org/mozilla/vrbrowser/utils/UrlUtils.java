@@ -10,14 +10,18 @@ import android.util.Base64;
 import android.util.Patterns;
 import android.webkit.URLUtil;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.mozilla.vrbrowser.R;
 import org.mozilla.vrbrowser.browser.SettingsStore;
+import org.mozilla.vrbrowser.search.SearchEngineWrapper;
+import org.mozilla.vrbrowser.telemetry.GleanMetricsService;
 
 import java.io.File;
 import java.net.MalformedURLException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.regex.Pattern;
 
@@ -135,14 +139,14 @@ public class UrlUtils {
 
             } else {
                 try {
-                    URI uri = URI.create(aUri);
+                    URI uri = parseUri(aUri);
                     URL url = new URL(
                             uri.getScheme() != null ? uri.getScheme() : "",
                             uri.getAuthority() != null ? uri.getAuthority() : "",
                             "");
                     return url.toString();
 
-                } catch (MalformedURLException | IllegalArgumentException e) {
+                } catch (MalformedURLException | URISyntaxException e) {
                     return "";
                 }
             }
@@ -174,6 +178,26 @@ public class UrlUtils {
         return url.equalsIgnoreCase(ABOUT_DOWNLOADS);
     }
 
+    public static final String ABOUT_ADDONS = "about://addons";
+
+    public static boolean isAddonsUrl(@Nullable String url) {
+        if (url == null) {
+            return false;
+        }
+
+        return url.equalsIgnoreCase(ABOUT_ADDONS);
+    }
+
+    public static final String WEB_EXTENSION_URL = "moz-extension://";
+
+    public static boolean isWebExtensionUrl(@Nullable String url) {
+        if (url == null) {
+            return false;
+        }
+
+        return url.startsWith(WEB_EXTENSION_URL);
+    }
+
     public static final String ABOUT_PRIVATE = "about://privatebrowsing";
 
     public static boolean isPrivateUrl(@Nullable String url) {
@@ -181,7 +205,7 @@ public class UrlUtils {
     }
 
     public static boolean isAboutPage(@Nullable String url) {
-        return isHistoryUrl(url) || isBookmarksUrl(url) || isDownloadsUrl(url) || isPrivateUrl(url);
+        return isHistoryUrl(url) || isBookmarksUrl(url) || isDownloadsUrl(url) || isAddonsUrl(url) || isPrivateUrl(url);
     }
 
     public static boolean isContentFeed(Context aContext, @Nullable String url) {
@@ -196,5 +220,37 @@ public class UrlUtils {
         } catch (MalformedURLException e) {
             return uri;
         }
+    }
+
+    public static URI parseUri(String aUri) throws URISyntaxException {
+        try {
+            return new URI(aUri);
+        } catch (URISyntaxException e) {
+            if (!StringUtils.isEmpty(aUri) && StringUtils.charCount(aUri, '#') >= 2) {
+                // Browsers are able to handle URLs with double # by ignoring everything after the
+                // second # occurrence. But Java implementation considers it an invalid URL.
+                // Remove everything after the second #.
+                int index = aUri.indexOf("#", aUri.indexOf("#") + 1);
+                return parseUri(aUri.substring(0, index));
+            }
+            throw e;
+        }
+    }
+
+    public static String urlForText(@NonNull Context context, @NonNull String text) {
+        String url = text.trim();
+        if ((UrlUtils.isDomain(text) || UrlUtils.isIPUri(text)) && !text.contains(" ")) {
+            url = text;
+            GleanMetricsService.urlBarEvent(true);
+        } else if (text.startsWith("about:") || text.startsWith("resource://")) {
+            url = text;
+        } else {
+            url = SearchEngineWrapper.get(context).getSearchURL(text);
+
+            // Doing search in the URL bar, so sending "aIsURL: false" to telemetry.
+            GleanMetricsService.urlBarEvent(false);
+        }
+
+        return url;
     }
 }

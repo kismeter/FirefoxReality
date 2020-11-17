@@ -24,6 +24,7 @@
 #include "VRBrowser.h"
 #include "VRVideo.h"
 #include "VRLayer.h"
+#include "VRLayerNode.h"
 #include "vrb/CameraSimple.h"
 #include "vrb/Color.h"
 #include "vrb/ConcreteClass.h"
@@ -158,6 +159,8 @@ struct BrowserWorld::State {
   TransformPtr rootOpaque;
   TransformPtr rootTransparent;
   TransformPtr rootWebXRInterstitial;
+  TransformPtr rootEnvironment;
+  VRLayerProjectionPtr layerEnvironment;
   GroupPtr rootController;
   LightPtr light;
   ControllerContainerPtr controllers;
@@ -191,6 +194,7 @@ struct BrowserWorld::State {
   WebXRInterstialState webXRInterstialState;
   vrb::Matrix widgetsYaw;
   bool wasWebXRRendering = false;
+  double lastBatteryLevelUpdate = -1.0;
 
   State() : paused(true), glInitialized(false), modelsLoaded(false), env(nullptr), cylinderDensity(0.0f), nearClip(0.1f),
             farClip(300.0f), activity(nullptr), windowsInitialized(false), exitImmersiveRequested(false), loaderDelay(0) {
@@ -360,12 +364,10 @@ BrowserWorld::State::UpdateGazeModeState() {
     if (isInGazeMode && gazeIndex >= 0) {
       VRB_LOG("Gaze mode ON")
       controllers->SetEnabled(gazeIndex, true);
-      controllers->SetVisible(gazeIndex, true);
 
     } else {
       VRB_LOG("Gaze mode OFF")
       controllers->SetEnabled(gazeIndex, false);
-      controllers->SetVisible(gazeIndex, false);
     }
     wasInGazeMode = isInGazeMode;
   }
@@ -374,9 +376,18 @@ BrowserWorld::State::UpdateGazeModeState() {
 void
 BrowserWorld::State::UpdateControllers(bool& aRelayoutWidgets) {
   EnsureControllerFocused();
+  int leftBatteryLevel = -1;
+  int rightBatteryLevel = -1;
   for (Controller& controller: controllers->GetControllers()) {
     if (!controller.enabled || (controller.index < 0)) {
       continue;
+    }
+    if (controller.index != device->GazeModeIndex()) {
+      if (controller.leftHanded) {
+        leftBatteryLevel = controller.batteryLevel;
+      } else {
+        rightBatteryLevel = controller.batteryLevel;
+      }
     }
     if (controller.pointer && !controller.pointer->IsLoaded()) {
       controller.pointer->Load(device);
@@ -426,7 +437,7 @@ BrowserWorld::State::UpdateControllers(bool& aRelayoutWidgets) {
         hitPoint = result;
         hitNormal = normal;
       }
-    } else {
+    } else if (controllers->IsVisible()){
       for (const WidgetPtr& widget: widgets) {
         if (controller.focused) {
           if (isResizing && resizingWidget != widget) {
@@ -564,6 +575,10 @@ BrowserWorld::State::UpdateControllers(bool& aRelayoutWidgets) {
       }
     }
     controller.lastButtonState = controller.buttonState;
+  }
+  if ((context->GetTimestamp() - lastBatteryLevelUpdate) > 1.0) {
+    VRBrowser::UpdateControllerBatteryLevels(leftBatteryLevel, rightBatteryLevel);
+    lastBatteryLevelUpdate = context->GetTimestamp();
   }
   if (gestures) {
     const int32_t gestureCount = gestures->GetGestureCount();
@@ -717,12 +732,14 @@ BrowserWorld::State::SortWidgets() {
     Widget* wa = da->second.first;
     Widget* wb = db->second.first;
 
-    // Parenting sort
+    // Parenting or layer priority sort
     if (wa && wb && wa->IsVisible() && wb->IsVisible()) {
       if (IsParent(*wa, *wb)) {
         return true;
       } else if (IsParent(*wb, *wa)) {
         return false;
+      } else if (wa->GetPlacement()->layerPriority != wb->GetPlacement()->layerPriority) {
+        return wa->GetPlacement()->layerPriority > wb->GetPlacement()->layerPriority;
       }
     }
 
@@ -857,11 +874,9 @@ BrowserWorld::InitializeJava(JNIEnv* aEnv, jobject& aActivity, jobject& aAssetMa
     if (m.device->IsControllerLightEnabled()) {
       m.rootController->AddLight(m.light);
     }
-#if !defined(SNAPDRAGONVR)
+
     UpdateEnvironment();
-    // Don't load the env model, we are going for skyboxes in v1.0
-//    CreateFloor();
-#endif
+
     m.fadeAnimation->SetFadeChangeCallback([=](const vrb::Color& aTintColor) {
       if (m.skybox) {
         m.skybox->SetTintColor(aTintColor);
@@ -1021,7 +1036,7 @@ void
 BrowserWorld::UpdateEnvironment() {
   ASSERT_ON_RENDER_THREAD();
   std::string skyboxPath = VRBrowser::GetActiveEnvironment();
-  std::string extension;
+  std::string extension = Skybox::ValidateCustomSkyboxAndFindFileExtension(skyboxPath);
   if (VRBrowser::isOverrideEnvPathEnabled()) {
     std::string storagePath = VRBrowser::GetStorageAbsolutePath(INJECT_SKYBOX_PATH);
     if (std::ifstream(storagePath)) {
@@ -1463,6 +1478,9 @@ BrowserWorld::TickWorld() {
   m.device->StartFrame();
   m.rootOpaque->SetTransform(m.device->GetReorientTransform());
   m.rootTransparent->SetTransform(m.device->GetReorientTransform().PostMultiply(m.widgetsYaw));
+  if (m.rootEnvironment) {
+    m.rootEnvironment->SetTransform(m.device->GetReorientTransform());
+  }
   if (m.vrVideo) {
     m.vrVideo->SetReorientTransform(m.device->GetReorientTransform());
   }
@@ -1476,15 +1494,38 @@ void
 BrowserWorld::DrawWorld(device::Eye aEye) {
   const CameraPtr camera = aEye == device::Eye::Left ? m.leftCamera : m.rightCamera;
   m.device->BindEye(aEye);
+
+  // Draw skybox
   m.drawList->Reset();
   m.rootOpaqueParent->Cull(*m.cullVisitor, *m.drawList);
   m.drawList->Draw(*camera);
+
+  // Draw environment if available
+  if (m.layerEnvironment) {
+    m.layerEnvironment->SetCurrentEye(aEye);
+    m.layerEnvironment->Bind();
+    VRB_GL_CHECK(glViewport(0, 0, m.layerEnvironment->GetWidth(), m.layerEnvironment->GetHeight()));
+    VRB_GL_CHECK(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
+
+  }
+  if (m.rootEnvironment) {
+    m.drawList->Reset();
+    m.rootEnvironment->Cull(*m.cullVisitor, *m.drawList);
+    m.drawList->Draw(*camera);
+  }
+  if (m.layerEnvironment) {
+    m.layerEnvironment->Unbind();
+  }
+
+  // Draw equirect video
   if (m.vrVideo) {
     m.vrVideo->SelectEye(aEye);
     m.drawList->Reset();
     m.vrVideo->GetRoot()->Cull(*m.cullVisitor, *m.drawList);
     m.drawList->Draw(*camera);
   }
+
+  // Draw controllers
   m.drawList->Reset();
   m.rootController->Cull(*m.cullVisitor, *m.drawList);
   m.drawList->Draw(*camera);
@@ -1654,6 +1695,23 @@ BrowserWorld::CreateSkyBox(const std::string& aBasePath, const std::string& aExt
     m.skybox = Skybox::Create(m.create, layer);
     m.rootOpaqueParent->AddNode(m.skybox->GetRoot());
     m.skybox->Load(m.loader, aBasePath, extension);
+  }
+}
+
+void BrowserWorld::CreateEnvironment() {
+  ASSERT_ON_RENDER_THREAD();
+  m.rootEnvironment = Transform::Create(m.create);
+  m.rootEnvironment->AddLight(Light::Create(m.create));
+
+  vrb::TransformPtr model = Transform::Create(m.create);
+  m.loader->LoadModel("FirefoxPlatform2_low.obj", model);
+  m.rootEnvironment->AddNode(model);
+  vrb::Matrix transform = vrb::Matrix::Identity();
+  model->SetTransform(transform);
+
+  m.layerEnvironment = m.device->CreateLayerProjection(VRLayerSurface::SurfaceType::FBO);
+  if (m.layerEnvironment) {
+    m.rootEnvironment->AddNode(VRLayerNode::Create(m.create, m.layerEnvironment));
   }
 }
 

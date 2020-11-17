@@ -7,7 +7,6 @@ package org.mozilla.vrbrowser.ui.views.library;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
-import android.util.AttributeSet;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -19,7 +18,6 @@ import androidx.lifecycle.ViewModelProvider;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import org.mozilla.geckoview.GeckoSessionSettings;
 import org.mozilla.vrbrowser.R;
 import org.mozilla.vrbrowser.VRBrowserActivity;
 import org.mozilla.vrbrowser.VRBrowserApplication;
@@ -37,9 +35,7 @@ import org.mozilla.vrbrowser.ui.callbacks.BookmarkItemCallback;
 import org.mozilla.vrbrowser.ui.callbacks.BookmarksCallback;
 import org.mozilla.vrbrowser.ui.callbacks.LibraryContextMenuCallback;
 import org.mozilla.vrbrowser.ui.viewmodel.BookmarksViewModel;
-import org.mozilla.vrbrowser.ui.widgets.WidgetManagerDelegate;
 import org.mozilla.vrbrowser.ui.widgets.WindowWidget;
-import org.mozilla.vrbrowser.ui.widgets.Windows;
 import org.mozilla.vrbrowser.ui.widgets.menus.library.BookmarksContextMenuWidget;
 import org.mozilla.vrbrowser.ui.widgets.menus.library.LibraryContextMenuWidget;
 import org.mozilla.vrbrowser.utils.SystemUtils;
@@ -71,18 +67,8 @@ public class BookmarksView extends LibraryView implements BookmarksStore.Bookmar
     private CustomLinearLayoutManager mLayoutManager;
     private BookmarksViewModel mViewModel;
 
-    public BookmarksView(Context aContext) {
-        super(aContext);
-        initialize();
-    }
-
-    public BookmarksView(Context aContext, AttributeSet aAttrs) {
-        super(aContext, aAttrs);
-        initialize();
-    }
-
-    public BookmarksView(Context aContext, AttributeSet aAttrs, int aDefStyle) {
-        super(aContext, aAttrs, aDefStyle);
+    public BookmarksView(Context aContext, @NonNull LibraryPanel delegate) {
+        super(aContext, delegate);
         initialize();
     }
 
@@ -155,6 +141,10 @@ public class BookmarksView extends LibraryView implements BookmarksStore.Bookmar
     @Override
     public void onShow() {
         updateLayout();
+        mBinding.bookmarksList.smoothScrollToPosition(0);
+        if (mRootPanel != null) {
+            mRootPanel.onViewUpdated(getContext().getString(R.string.bookmarks_title));
+        }
     }
 
     @Override
@@ -178,7 +168,7 @@ public class BookmarksView extends LibraryView implements BookmarksStore.Bookmar
             session.loadUri(item.getUrl());
 
             WindowWidget window = mWidgetManager.getFocusedWindow();
-            window.hidePanel(Windows.PanelType.BOOKMARKS);
+            window.hidePanel();
         }
 
         @Override
@@ -240,14 +230,16 @@ public class BookmarksView extends LibraryView implements BookmarksStore.Bookmar
                             mAccounts.logoutAsync();
 
                         } else {
-                            mAccounts.setLoginOrigin(Accounts.LoginOrigin.BOOKMARKS);
-                            WidgetManagerDelegate widgetManager = ((VRBrowserActivity) getContext());
-                            widgetManager.openNewTabForeground(url);
-                            widgetManager.getFocusedWindow().getSession().setUaMode(GeckoSessionSettings.USER_AGENT_MODE_MOBILE);
+                            mWidgetManager.openNewTabForeground(url);
+                            Session currentSession = mWidgetManager.getFocusedWindow().getSession();
+                            String sessionId = currentSession != null ? currentSession.getId() : null;
+
+                            mAccounts.setOrigin(Accounts.LoginOrigin.BOOKMARKS, sessionId);
+
                             GleanMetricsService.Tabs.openedCounter(GleanMetricsService.Tabs.TabSource.FXA_LOGIN);
 
                             WindowWidget window = mWidgetManager.getFocusedWindow();
-                            window.hidePanel(Windows.PanelType.BOOKMARKS);
+                            window.hidePanel();
                         }
 
                     }, mUIThreadExecutor).exceptionally(throwable -> {

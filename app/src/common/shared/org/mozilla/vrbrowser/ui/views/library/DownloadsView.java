@@ -9,7 +9,6 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.PointF;
 import android.graphics.Rect;
-import android.util.AttributeSet;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -36,7 +35,6 @@ import org.mozilla.vrbrowser.ui.viewmodel.DownloadsViewModel;
 import org.mozilla.vrbrowser.ui.widgets.UIWidget;
 import org.mozilla.vrbrowser.ui.widgets.WidgetPlacement;
 import org.mozilla.vrbrowser.ui.widgets.WindowWidget;
-import org.mozilla.vrbrowser.ui.widgets.Windows;
 import org.mozilla.vrbrowser.ui.widgets.dialogs.PromptDialogWidget;
 import org.mozilla.vrbrowser.ui.widgets.menus.library.DownloadsContextMenuWidget;
 import org.mozilla.vrbrowser.ui.widgets.menus.library.LibraryContextMenuWidget;
@@ -57,18 +55,8 @@ public class DownloadsView extends LibraryView implements DownloadsManager.Downl
     private Comparator<Download> mSortingComparator;
     private DownloadsViewModel mViewModel;
 
-    public DownloadsView(Context aContext) {
-        super(aContext);
-        initialize();
-    }
-
-    public DownloadsView(Context aContext, AttributeSet aAttrs) {
-        super(aContext, aAttrs);
-        initialize();
-    }
-
-    public DownloadsView(Context aContext, AttributeSet aAttrs, int aDefStyle) {
-        super(aContext, aAttrs, aDefStyle);
+    public DownloadsView(Context aContext, @NonNull LibraryPanel delegate) {
+        super(aContext, delegate);
         initialize();
     }
 
@@ -132,6 +120,9 @@ public class DownloadsView extends LibraryView implements DownloadsManager.Downl
         mDownloadsManager.addListener(this);
         onDownloadsUpdate(mDownloadsManager.getDownloads());
         updateLayout();
+        if (mRootPanel != null) {
+            mRootPanel.onViewUpdated(getContext().getString(R.string.downloads_title));
+        }
     }
 
     @Override
@@ -145,10 +136,10 @@ public class DownloadsView extends LibraryView implements DownloadsManager.Downl
         public void onClick(@NonNull View view, @NonNull Download item) {
             mBinding.downloadsList.requestFocusFromTouch();
 
-            SessionStore.get().getActiveSession().loadUri(item.getOutputFile());
+            SessionStore.get().getActiveSession().loadUri(item.getOutputFileUri());
 
             WindowWidget window = mWidgetManager.getFocusedWindow();
-            window.hidePanel(Windows.PanelType.HISTORY);
+            window.hidePanel();
         }
 
         @Override
@@ -223,7 +214,7 @@ public class DownloadsView extends LibraryView implements DownloadsManager.Downl
                     view,
                     new DownloadsContextMenuWidget(getContext(),
                             new DownloadsContextMenuWidget.DownloadsContextMenuItem(
-                                    item.getOutputFile(),
+                                    item.getOutputFileUri(),
                                     item.getTitle(),
                                     item.getId()),
                             mWidgetManager.canOpenNewWindow()),
@@ -314,8 +305,8 @@ public class DownloadsView extends LibraryView implements DownloadsManager.Downl
         float ratio = WidgetPlacement.viewToWidgetRatio(getContext(), window);
 
         Rect offsetViewBounds = new Rect();
-        getDrawingRect(offsetViewBounds);
-        offsetDescendantRectToMyCoords(view, offsetViewBounds);
+        mRootPanel.getDrawingRect(offsetViewBounds);
+        mRootPanel.offsetDescendantRectToMyCoords(view, offsetViewBounds);
 
         SortingContextMenuWidget menu = new SortingContextMenuWidget(getContext());
         menu.setItemDelegate(item -> {
@@ -325,10 +316,10 @@ public class DownloadsView extends LibraryView implements DownloadsManager.Downl
         });
         menu.getPlacement().parentHandle = window.getHandle();
 
-        menu.getPlacement().anchorY = 1.0f;
+        menu.getPlacement().anchorY = 0.0f;
         PointF position = new PointF(
                 (offsetViewBounds.left + view.getWidth()) * ratio,
-                -(offsetViewBounds.top + view.getHeight()) * ratio);
+                -(offsetViewBounds.top) * ratio);
         menu.getPlacement().translationX = position.x - (menu.getWidth() / menu.getPlacement().density);
         menu.getPlacement().translationY = position.y + getResources().getDimension(R.dimen.library_menu_top_margin) / menu.getPlacement().density;
         menu.show(UIWidget.REQUEST_FOCUS);
@@ -416,7 +407,7 @@ public class DownloadsView extends LibraryView implements DownloadsManager.Downl
     public void onDownloadError(@NonNull String error, @NonNull String filename) {
         Log.e(LOGTAG, error);
         mWidgetManager.getFocusedWindow().showAlert(
-                getContext().getString(R.string.download_error_title),
+                getContext().getString(R.string.download_error_title_v1),
                 error,
                 null
         );

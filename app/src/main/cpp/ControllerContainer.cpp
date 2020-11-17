@@ -73,6 +73,16 @@ struct ControllerContainer::State {
       aController.pointer->SetPointerColor(pointerColor);
     }
   }
+
+  void
+  SetVisible(Controller& controller, const bool aVisible) {
+    if (controller.transform && visible) {
+      root->ToggleChild(*controller.transform, aVisible);
+    }
+    if (controller.pointer && !aVisible) {
+      controller.pointer->SetVisible(false);
+    }
+  }
 };
 
 ControllerContainerPtr
@@ -283,23 +293,10 @@ ControllerContainer::SetEnabled(const int32_t aControllerIndex, const bool aEnab
   m.list[aControllerIndex].enabled = aEnabled;
   if (!aEnabled) {
     m.list[aControllerIndex].focused = false;
-    SetVisible(aControllerIndex, false);
   }
+  m.SetVisible(m.list[aControllerIndex], aEnabled);
 }
 
-void
-ControllerContainer::SetVisible(const int32_t aControllerIndex, const bool aVisible) {
-  if (!m.Contains(aControllerIndex)) {
-    return;
-  }
-  Controller& controller = m.list[aControllerIndex];
-  if (controller.transform && m.visible) {
-    m.root->ToggleChild(*controller.transform, aVisible);
-  }
-  if (controller.pointer && !aVisible) {
-    controller.pointer->SetVisible(false);
-  }
-}
 
 void
 ControllerContainer::SetControllerType(const int32_t aControllerIndex, device::DeviceType aType) {
@@ -517,11 +514,23 @@ ControllerContainer::SetScrolledDelta(const int32_t aControllerIndex, const floa
   controller.scrollDeltaY = aScrollDeltaY;
 }
 
+void
+ControllerContainer::SetBatteryLevel(const int32_t aControllerIndex, const int32_t aBatteryLevel) {
+  if (!m.Contains(aControllerIndex)) {
+    return;
+  }
+  m.list[aControllerIndex].batteryLevel = aBatteryLevel;
+}
 void ControllerContainer::SetPointerColor(const vrb::Color& aColor) const {
   m.pointerColor = aColor;
   for (Controller& controller: m.list) {
     m.updatePointerColor(controller);
   }
+}
+
+bool
+ControllerContainer::IsVisible() const {
+  return m.visible;
 }
 
 void
@@ -542,7 +551,8 @@ ControllerContainer::SetVisible(const bool aVisible) {
   }
 }
 
-void ControllerContainer::SetGazeModeIndex(const int32_t aControllerIndex) {
+void
+ControllerContainer::SetGazeModeIndex(const int32_t aControllerIndex) {
   m.gazeIndex = aControllerIndex;
 }
 

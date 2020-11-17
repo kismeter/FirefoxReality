@@ -194,6 +194,11 @@ struct DeviceDelegateWaveVR::State {
     cameras[device::EyeIndex(device::Eye::Left)] = vrb::CameraEye::Create(create);
     cameras[device::EyeIndex(device::Eye::Right)] = vrb::CameraEye::Create(create);
     InitializeCameras();
+
+    elbow = ElbowModel::Create();
+  }
+
+  void InitializeRender() {
     WVR_GetRenderTargetSize(&renderWidth, &renderHeight);
     VRB_GL_CHECK(glViewport(0, 0, renderWidth, renderHeight));
     VRB_DEBUG("Recommended size is %ux%u", renderWidth, renderHeight);
@@ -201,8 +206,10 @@ struct DeviceDelegateWaveVR::State {
       VRB_ERROR("Please check Wave server configuration");
       return;
     }
+    if (immersiveDisplay) {
+      immersiveDisplay->SetEyeResolution(renderWidth, renderHeight);
+    }
     InitializeTextureQueues();
-    elbow = ElbowModel::Create();
   }
 
   void InitializeTextureQueues() {
@@ -281,6 +288,16 @@ struct DeviceDelegateWaveVR::State {
       return;
     }
 
+    if (WVR_IsInputFocusCapturedBySystem()) {
+      for (Controller& controller: controllers) {
+        if (controller.enabled) {
+          delegate->SetEnabled(controller.index, false);
+          controller.enabled = false;
+        }
+      }
+      return;
+    }
+
     for (Controller& controller: controllers) {
       const bool is6DoF = WVR_GetDegreeOfFreedom(controller.type) == WVR_NumDoF_6DoF;
       if (controller.is6DoF != is6DoF) {
@@ -312,11 +329,8 @@ struct DeviceDelegateWaveVR::State {
         }
         controller.enabled = true;
         delegate->SetEnabled(controller.index, true);
-        delegate->SetVisible(controller.index, true);
         delegate->SetCapabilityFlags(controller.index, flags);
       }
-
-      delegate->SetVisible(controller.index, !WVR_IsInputFocusCapturedBySystem());
 
       const bool bumperPressed = (controller.is6DoF) ? WVR_GetInputButtonState(controller.type, WVR_InputId_Alias1_Trigger)
                                   : WVR_GetInputButtonState(controller.type, WVR_InputId_Alias1_Digital_Trigger);
@@ -459,6 +473,10 @@ DeviceDelegateWaveVR::Create(vrb::RenderContextPtr& aContext) {
   result->m.context = aContext;
   result->m.Initialize();
   return result;
+}
+
+void DeviceDelegateWaveVR::InitializeRender() {
+  m.InitializeRender();
 }
 
 device::DeviceType
@@ -803,6 +821,8 @@ DeviceDelegateWaveVR::StartFrame(const FramePrediction aPrediction) {
     if (!controller.enabled) {
       continue;
     }
+    float level = WVR_GetDeviceBatteryPercentage(controller.type);
+    m.delegate->SetBatteryLevel(controller.index, (int)(level * 100.0f));
     const WVR_PoseState_t &pose = m.devicePairs[id].pose;
     if (!pose.isValidPose) {
       continue;

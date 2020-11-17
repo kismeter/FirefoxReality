@@ -56,13 +56,14 @@ public class SessionState {
     public transient ArrayList<Media> mMediaElements = new ArrayList<>();
     public transient @WebXRState int mWebXRState = WEBXR_UNUSED;
     public transient @PopupState int mPopUpState = POPUP_UNUSED;
-    public transient @PopupState int mDrmState = DRM_UNUSED;
+    public transient @DrmState int mDrmState = DRM_UNUSED;
     @JsonAdapter(SessionState.GeckoSessionStateAdapter.class)
     public GeckoSession.SessionState mSessionState;
     public long mLastUse;
     public String mRegion;
     public String mId = UUID.randomUUID().toString();
     public String mParentId; // Parent session stack Id.
+    public transient boolean mIsWebExtensionSession = false;
 
     public SessionState recreate() {
         SessionState result = new SessionState();
@@ -75,6 +76,7 @@ public class SessionState {
         result.mRegion = mRegion;
         result.mId = mId;
         result.mParentId = mParentId;
+        result.mIsWebExtensionSession = mIsWebExtensionSession;
 
         return result;
     }

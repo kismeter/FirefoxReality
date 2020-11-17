@@ -22,10 +22,8 @@ import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.StorageController;
 import org.mozilla.vrbrowser.R;
 import org.mozilla.vrbrowser.browser.SettingsStore;
-import org.mozilla.vrbrowser.browser.engine.SessionState;
 import org.mozilla.vrbrowser.browser.engine.SessionStore;
 import org.mozilla.vrbrowser.databinding.OptionsPrivacyBinding;
-import org.mozilla.vrbrowser.db.SitePermission;
 import org.mozilla.vrbrowser.ui.views.settings.RadioGroupSetting;
 import org.mozilla.vrbrowser.ui.views.settings.SwitchSetting;
 import org.mozilla.vrbrowser.ui.widgets.WidgetManagerDelegate;
@@ -132,6 +130,9 @@ class PrivacyOptionsView extends SettingsView {
         mBinding.restoreTabsSwitch.setOnCheckedChangeListener(mRestoreTabsListener);
         setRestoreTabs(SettingsStore.getInstance(getContext()).isRestoreTabsEnabled(), false);
 
+        mBinding.autocompleteSwitch.setOnCheckedChangeListener(mAutocompleteListener);
+        setAutocomplete(SettingsStore.getInstance(getContext()).isAutocompleteEnabled(), false);
+
         mBinding.webxrSwitch.setOnCheckedChangeListener(mWebXRListener);
         setWebXR(SettingsStore.getInstance(getContext()).isWebXREnabled(), false);
         mBinding.webxrExceptionsButton.setOnClickListener(v -> mDelegate.showView(SettingViewType.WEBXR_EXCEPTIONS));
@@ -149,6 +150,8 @@ class PrivacyOptionsView extends SettingsView {
         @SettingsStore.Storage int downloadsStorage = SettingsStore.getInstance(getContext()).getDownloadsStorage();
         mBinding.downloadsStorage.setOnCheckedChangeListener(mDownloadsStorageListener);
         setDownloadsStorage(mBinding.downloadsStorage.getIdForValue(downloadsStorage), false);
+
+        mBinding.loginsAndPasswords.setOnClickListener(view -> mDelegate.showView(SettingViewType.LOGINS_AND_PASSWORDS));
     }
 
     private void togglePermission(SwitchSetting aButton, String aPermission) {
@@ -202,6 +205,10 @@ class PrivacyOptionsView extends SettingsView {
         setRestoreTabs(value, doApply);
     };
 
+    private SwitchSetting.OnCheckedChangeListener mAutocompleteListener = (compoundButton, value, doApply) -> {
+        setAutocomplete(value, doApply);
+    };
+
     private SwitchSetting.OnCheckedChangeListener mWebXRListener = (compoundButton, value, doApply) -> {
         setWebXR(value, doApply);
     };
@@ -226,6 +233,7 @@ class PrivacyOptionsView extends SettingsView {
         if (mBinding.speechDataSwitch.isChecked() != SettingsStore.SPEECH_DATA_COLLECTION_DEFAULT) {
             setSpeechData(SettingsStore.SPEECH_DATA_COLLECTION_DEFAULT, true);
         }
+        SettingsStore.getInstance(getContext()).setSpeechDataCollectionReviewed(false);
 
         if (mBinding.telemetryDataSwitch.isChecked() != SettingsStore.TELEMETRY_DEFAULT) {
             setTelemetry(SettingsStore.TELEMETRY_DEFAULT, true);
@@ -241,6 +249,10 @@ class PrivacyOptionsView extends SettingsView {
 
         if (mBinding.restoreTabsSwitch.isChecked() != SettingsStore.RESTORE_TABS_ENABLED) {
             setRestoreTabs(SettingsStore.RESTORE_TABS_ENABLED, true);
+        }
+
+        if (mBinding.autocompleteSwitch.isChecked() != SettingsStore.AUTOCOMPLETE_ENABLED) {
+            setAutocomplete(SettingsStore.AUTOCOMPLETE_ENABLED, true);
         }
 
         if (mBinding.webxrSwitch.isChecked() != SettingsStore.WEBXR_ENABLED_DEFAULT) {
@@ -329,6 +341,16 @@ class PrivacyOptionsView extends SettingsView {
 
         if (doApply) {
             SettingsStore.getInstance(getContext()).setRestoreTabsEnabled(value);
+        }
+    }
+
+    private void setAutocomplete(boolean value, boolean doApply) {
+        mBinding.autocompleteSwitch.setOnCheckedChangeListener(null);
+        mBinding.autocompleteSwitch.setValue(value, false);
+        mBinding.autocompleteSwitch.setOnCheckedChangeListener(mAutocompleteListener);
+
+        if (doApply) {
+            SettingsStore.getInstance(getContext()).setAutocompleteEnabled(value);
         }
     }
 

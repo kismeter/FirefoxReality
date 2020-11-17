@@ -54,8 +54,18 @@
     <string name="settings_key_multi_e10s" translatable="false">settings_key_multi_e10s</string>
     <string name="settings_key_downloads_external" translatable="false">settings_key_downloads_external</string>
     <string name="settings_key_downloads_sorting_order" translatable="false">settings_key_downloads_sorting_order</string>
+    <string name="settings_key_remote_props_version_name" translatable="false">settings_key_remote_props_version_name</string>
+    <string name="settings_key_remote_props" translatable="false">settings_key_remote_props</string>
+    <string name="settings_key_autocomplete" translatable="false">settings_key_autocomplete</string>
+    <string name="settings_key_webgl_out_of_process" translatable="false">settings_key_webgl_out_of_processe</string>
+    <string name="settings_key_prefs_last_reset_version_code" translatable="false">settings_key_prefs_last_reset_version_code</string>
+    <string name="enable_webgl_out_of_process_switch" translatable="false">Out of Process WebGL</string>
+    <string name="settings_key_passwords_encryption_key_generated" translatable="false">settings_key_passwords_encryption_key_generated</string>
+    <string name="settings_key_autofill_enabled" translatable="false">settings_key_autofill_enabled</string>
+    <string name="settings_key_login_autocomplete_enabled" translatable="false">settings_key_login_autocomplete_enabled</string>
+    <string name="settings_key_login_sync_enabled" translatable="false">settings_key_login_sync_enabled</string>
     <string name="environment_override_help_url" translatable="false">https://github.com/MozillaReality/FirefoxReality/wiki/Environments</string>
-    <string name="private_policy_url" translatable="false">https://www.mozilla.org/privacy/firefox/</string>
+    <string name="private_policy_url" translatable="false">https://www.mozilla.org/privacy/firefox-reality/</string>
     <string name="private_report_url" translatable="false">https://mixedreality.mozilla.org/fxr/report?src=browser-fxr&amp;label=browser-firefox-reality&amp;url=%1$s</string>
     <string name="help_url" translatable="false">https://support.mozilla.org/products/firefox-reality</string>
     <string name="sumo_language_voice_url" translatable="false">https://support.mozilla.org/kb/using-voice-search-firefox-reality</string>
@@ -64,6 +74,7 @@
     <string name="sumo_etp_url" translatable="false">https://support.mozilla.org/kb/enhanced-tracking-protection-firefox-desktop</string>
     <string name="sumo_drm_url" translatable="false">https://support.mozilla.org/kb/enable-drm</string>
     <string name="sumo_webxr_url" translatable="false">https://support.mozilla.org/en-US/kb/webxr-permission-info-page</string>
+    <string name="sumo_addons_permissions" translatable="false">https://support.mozilla.org/kb/permission-request-messages-firefox-extensions</string>
     <string name="list_item_view_tag" translatable="false">view</string>
     <string name="position_tag" translatable="false">position</string>
     <string name="view_id_tag" translatable="false">view_id</string>
@@ -82,6 +93,7 @@
     <string name="keyboard_mode_change" translatable="false">ABC</string>
     <string name="keyboard_symbol" translatable="false">%&amp;=</string>
     <string name="ellipsis" translatable="false">…</string>
+    <string name="release_notes_url" translatable="false">https://github.com/MozillaReality/FirefoxReality/wiki/Release-notes-for-version-%1$s</string>
 
     <string name="pinyin_spacebar_selection" translatable="false">选定</string>
     <string name="pinyin_spacebar_space" translatable="false">空格</string>
@@ -97,6 +109,8 @@
     <string name="japanese_spacebar_space" translatable="false">空白</string>
     <string name="japanese_enter_completion" translatable="false">確定</string>
     <string name="japanese_keyboard_mode_change" translatable="false">かな</string>
+
+    <string name="thai_keyboard_mode_change" translatable="false">กขค</string>
 
     <!-- Keyboard -->
     <string name="keyboard_popup_a" translatable="false">aáàäãåâąæā</string>

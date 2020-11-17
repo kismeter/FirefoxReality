@@ -46,12 +46,14 @@ public class UIButton extends AppCompatImageButton implements CustomUIButton {
     private @IdRes int mPrivateModeTintColorListRes;
     private @IdRes int mActiveModeTintColorListRes;
     private @IdRes int mNotificationModeTintColorListRes;
+    private @IdRes int mPrivateNotificationModeTintColorListRes;
     private TooltipWidget mTooltipView;
     private String mTooltipText;
     private int mTooltipDelay;
     private float mTooltipDensity;
     private @LayoutRes int mTooltipLayout;
-    private boolean mCurvedTooltip = true;
+    private boolean mCurvedTooltip;
+    private boolean mCurvedTooltipOverridden;
     private ViewUtils.TooltipPosition mTooltipPosition;
     private boolean mIsPrivate;
     private boolean mIsActive;
@@ -75,6 +77,7 @@ public class UIButton extends AppCompatImageButton implements CustomUIButton {
         mPrivateModeTintColorListRes = attributes.getResourceId(R.styleable.UIButton_privateModeTintColorList, 0);
         mActiveModeTintColorListRes = attributes.getResourceId(R.styleable.UIButton_activeModeTintColorList, 0);
         mNotificationModeTintColorListRes = attributes.getResourceId(R.styleable.UIButton_notificationModeTintColorList, 0);
+        mPrivateNotificationModeTintColorListRes = attributes.getResourceId(R.styleable.UIButton_privateNotificationModeTintColorList, 0);
         mTooltipDelay = attributes.getInt(R.styleable.UIButton_tooltipDelay, getResources().getInteger(R.integer.tooltip_delay));
         mTooltipPosition = ViewUtils.TooltipPosition.fromId(attributes.getInt(R.styleable.UIButton_tooltipPosition, ViewUtils.TooltipPosition.BOTTOM.ordinal()));
         TypedValue densityValue = new TypedValue();
@@ -85,6 +88,8 @@ public class UIButton extends AppCompatImageButton implements CustomUIButton {
             mTooltipText = arr.getString(0);
         }
         mTooltipLayout = attributes.getResourceId(R.styleable.UIButton_tooltipLayout, R.layout.tooltip);
+        mCurvedTooltip = attributes.getBoolean(R.styleable.UIButton_tooltipCurved, false);
+        mCurvedTooltipOverridden = attributes.hasValue(R.styleable.UIButton_tooltipCurved);
         mClipDrawable = (ClipDrawable)attributes.getDrawable(R.styleable.UIButton_clipDrawable);
         mClipColor = attributes.getColor(R.styleable.UIButton_clipColor, 0);
         attributes.recycle();
@@ -152,13 +157,6 @@ public class UIButton extends AppCompatImageButton implements CustomUIButton {
     @TargetApi(Build.VERSION_CODES.O)
     private void setTooltipTextInternal(@Nullable CharSequence tooltipText) {
         super.setTooltipText(tooltipText);
-    }
-
-    public void setCurvedTooltip(boolean aEnabled) {
-        mCurvedTooltip = aEnabled;
-        if (mTooltipView != null) {
-            mTooltipView.setCurvedMode(aEnabled);
-        }
     }
 
     @Override
@@ -267,7 +265,10 @@ public class UIButton extends AppCompatImageButton implements CustomUIButton {
     }
 
     private void setNotification() {
-        if (mActiveModeTintColorListRes != 0) {
+        if (mIsPrivate && mPrivateNotificationModeTintColorListRes != 0) {
+            setTintColorList(mPrivateNotificationModeTintColorListRes);
+
+        } else if (mNotificationModeTintColorListRes != 0) {
             setTintColorList(mNotificationModeTintColorListRes);
         }
     }
@@ -304,7 +305,6 @@ public class UIButton extends AppCompatImageButton implements CustomUIButton {
             if (mTooltipView == null) {
                 mTooltipView = new TooltipWidget(getContext(), mTooltipLayout);
             }
-            mTooltipView.setCurvedMode(mCurvedTooltip);
             if (getTooltipText() != null) {
                 mTooltipView.setText(getTooltipText().toString());
             }
@@ -312,7 +312,14 @@ public class UIButton extends AppCompatImageButton implements CustomUIButton {
             Rect offsetViewBounds = new Rect();
             getDrawingRect(offsetViewBounds);
             UIWidget parent = ViewUtils.getParentWidget(UIButton.this);
+            assert parent != null;
             parent.offsetDescendantRectToMyCoords(UIButton.this, offsetViewBounds);
+
+            // Use parent curved mode unless it has been overridden in the tooltip XML properties
+            mTooltipView.setCurvedMode(parent.getPlacement().cylinder);
+            if (mCurvedTooltipOverridden) {
+                mTooltipView.setCurvedMode(mCurvedTooltip);
+            }
 
             float ratio = WidgetPlacement.viewToWidgetRatio(getContext(), parent);
 
@@ -323,16 +330,13 @@ public class UIButton extends AppCompatImageButton implements CustomUIButton {
                 mTooltipView.getPlacement().anchorY = 1.0f;
                 mTooltipView.getPlacement().parentAnchorY = 0.0f;
                 mTooltipView.getPlacement().translationX = (offsetViewBounds.left + UIButton.this.getWidth() / 2.0f) * ratio;
-                mTooltipView.getPlacement().translationY = -offsetViewBounds.top * ratio;
 
             } else {
                 mTooltipView.getPlacement().anchorY = 0.0f;
                 mTooltipView.getPlacement().parentAnchorY = 1.0f;
                 mTooltipView.getPlacement().translationX = (offsetViewBounds.left + UIButton.this.getHeight() / 2.0f) * ratio;
-                mTooltipView.getPlacement().translationY = offsetViewBounds.top * ratio;
             }
 
-            mTooltipView.setCurvedMode(false);
             mTooltipView.show(UIWidget.CLEAR_FOCUS);
         }
     };

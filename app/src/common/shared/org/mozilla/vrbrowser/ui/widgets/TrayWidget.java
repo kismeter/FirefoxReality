@@ -7,8 +7,17 @@ package org.mozilla.vrbrowser.ui.widgets;
 
 import android.animation.Animator;
 import android.animation.ValueAnimator;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.res.Configuration;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.LayerDrawable;
+import android.graphics.drawable.VectorDrawable;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
+import android.text.format.DateFormat;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -24,6 +33,7 @@ import androidx.lifecycle.ViewModelProvider;
 
 import org.mozilla.vrbrowser.R;
 import org.mozilla.vrbrowser.VRBrowserActivity;
+import org.mozilla.vrbrowser.VRBrowserApplication;
 import org.mozilla.vrbrowser.audio.AudioEngine;
 import org.mozilla.vrbrowser.browser.BookmarksStore;
 import org.mozilla.vrbrowser.browser.engine.Session;
@@ -36,13 +46,19 @@ import org.mozilla.vrbrowser.ui.viewmodel.WindowViewModel;
 import org.mozilla.vrbrowser.ui.views.UIButton;
 import org.mozilla.vrbrowser.ui.widgets.settings.SettingsView;
 import org.mozilla.vrbrowser.ui.widgets.settings.SettingsWidget;
+import org.mozilla.vrbrowser.utils.ConnectivityReceiver;
+import org.mozilla.vrbrowser.utils.DeviceType;
+import org.mozilla.vrbrowser.utils.LocaleUtils;
 import org.mozilla.vrbrowser.utils.ViewUtils;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.List;
 
-public class TrayWidget extends UIWidget implements WidgetManagerDelegate.UpdateListener, DownloadsManager.DownloadsListener {
+public class TrayWidget extends UIWidget implements WidgetManagerDelegate.UpdateListener, DownloadsManager.DownloadsListener, ConnectivityReceiver.Delegate {
 
     private static final int ICON_ANIMATION_DURATION = 200;
 
@@ -50,6 +66,11 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
     private static final int TAB_SENT_NOTIFICATION_ID = 1;
     private static final int BOOKMARK_ADDED_NOTIFICATION_ID = 2;
     private static final int DOWNLOAD_COMPLETED_NOTIFICATION_ID = 3;
+    private static final int WIFI_NOTIFICATION_ID = 4;
+    private static final int LEFT_CONTROLLER_NOTIFICATION_ID = 5;
+    private static final int RIGHT_CONTROLLER_NOTIFICATION_ID = 6;
+    private static final int HEADSET_NOTIFICATION_ID = 7;
+    private static final int TIME_NOTIFICATION_ID = 8;
 
     private WindowViewModel mViewModel;
     private TrayViewModel mTrayViewModel;
@@ -62,6 +83,13 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
     private Session mSession;
     private WindowWidget mAttachedWindow;
     private boolean mIsWindowAttached;
+    private BroadcastReceiver mBroadcastReceiver;
+    private int mLastWifiLevel = -1;
+    private String mWifiSSID;
+    private int mHeadsetBatteryLevel;
+    private int mLeftControllerBatteryLevel;
+    private int mRightControllerBatteryLevel;
+    private ConnectivityReceiver mConnectivityReceived;
 
     public TrayWidget(Context aContext) {
         super(aContext);
@@ -88,6 +116,7 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
                 .get(TrayViewModel.class);
         mTrayViewModel.getIsVisible().observe((VRBrowserActivity) getContext(), mIsVisibleObserver);
 
+        mTrayViewModel.setHeadsetBatteryLevel(R.drawable.ic_icon_statusbar_indicator_10);
         updateUI();
 
         mIsWindowAttached = false;
@@ -101,6 +130,18 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
 
         mWidgetManager.addUpdateListener(this);
         mWidgetManager.getServicesProvider().getDownloadsManager().addListener(this);
+
+        mConnectivityReceived = ((VRBrowserApplication)getContext().getApplicationContext()).getConnectivityReceiver();
+        mConnectivityReceived.addListener(this);
+
+        mWifiSSID = getContext().getString(R.string.tray_wifi_no_connection);
+
+        updateTime();
+
+        if (DeviceType.getType() == DeviceType.OculusQuest) {
+            mTrayViewModel.setLeftControllerIcon(R.drawable.ic_icon_statusbar_leftcontroller);
+            mTrayViewModel.setRightControllerIcon(R.drawable.ic_icon_statusbar_rightcontroller);
+        }
     }
 
     public void updateUI() {
@@ -116,6 +157,9 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
 
         mBinding.privateButton.setOnHoverListener(mButtonScaleHoverListener);
         mBinding.privateButton.setOnClickListener(view -> {
+            if (isImmersive()) {
+                return;
+            }
             if (mAudio != null) {
                 mAudio.playSound(AudioEngine.Sound.CLICK);
             }
@@ -123,10 +167,12 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
             notifyPrivateBrowsingClicked();
             view.requestFocusFromTouch();
         });
-        mBinding.privateButton.setCurvedTooltip(false);
 
         mBinding.settingsButton.setOnHoverListener(mButtonScaleHoverListener);
         mBinding.settingsButton.setOnClickListener(view -> {
+            if (isImmersive()) {
+                return;
+            }
             if (mAudio != null) {
                 mAudio.playSound(AudioEngine.Sound.CLICK);
             }
@@ -136,32 +182,12 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
                 view.requestFocusFromTouch();
             }
         });
-        mBinding.settingsButton.setCurvedTooltip(false);
-
-        mBinding.bookmarksButton.setOnHoverListener(mButtonScaleHoverListener);
-        mBinding.bookmarksButton.setOnClickListener(view -> {
-            if (mAudio != null) {
-                mAudio.playSound(AudioEngine.Sound.CLICK);
-            }
-
-            notifyBookmarksClicked();
-            view.requestFocusFromTouch();
-        });
-        mBinding.bookmarksButton.setCurvedTooltip(false);
-
-        mBinding.historyButton.setOnHoverListener(mButtonScaleHoverListener);
-        mBinding.historyButton.setOnClickListener(view -> {
-            if (mAudio != null) {
-                mAudio.playSound(AudioEngine.Sound.CLICK);
-            }
-
-            notifyHistoryClicked();
-            view.requestFocusFromTouch();
-        });
-        mBinding.historyButton.setCurvedTooltip(false);
 
         mBinding.tabsButton.setOnHoverListener(mButtonScaleHoverListener);
         mBinding.tabsButton.setOnClickListener(view -> {
+            if (isImmersive()) {
+                return;
+            }
             if (mAudio != null) {
                 mAudio.playSound(AudioEngine.Sound.CLICK);
             }
@@ -169,10 +195,12 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
             view.requestFocusFromTouch();
             notifyTabsClicked();
         });
-        mBinding.tabsButton.setCurvedTooltip(false);
 
         mBinding.addwindowButton.setOnHoverListener(mButtonScaleHoverListener);
         mBinding.addwindowButton.setOnClickListener(view -> {
+            if (isImmersive()) {
+                return;
+            }
             if (mAudio != null) {
                 mAudio.playSound(AudioEngine.Sound.CLICK);
             }
@@ -181,18 +209,162 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
 
             notifyAddWindowClicked();
         });
-        mBinding.addwindowButton.setCurvedTooltip(false);
 
-        mBinding.downloadsButton.setOnHoverListener(mButtonScaleHoverListener);
-        mBinding.downloadsButton.setOnClickListener(view -> {
+        mBinding.libraryButton.setOnHoverListener(mButtonScaleHoverListener);
+        mBinding.libraryButton.setOnClickListener(view -> {
             if (mAudio != null) {
                 mAudio.playSound(AudioEngine.Sound.CLICK);
             }
 
-            notifyDownloadsClicked();
+            notifyLibraryClicked();
             view.requestFocusFromTouch();
         });
-        mBinding.downloadsButton.setCurvedTooltip(false);
+
+        mBinding.wifi.setOnHoverListener((view, motionEvent) -> {
+            if (motionEvent.getAction() == MotionEvent.ACTION_HOVER_ENTER) {
+                NotificationManager.Notification notification = new NotificationManager.Builder(TrayWidget.this)
+                        .withView(mBinding.wifi)
+                        .withDensity(R.dimen.tray_tooltip_density)
+                        .withLayout(R.layout.tooltip)
+                        .withString(mWifiSSID)
+                        .withAutoHide(false)
+                        .withMargin(-15.0f)
+                        .withPosition(NotificationManager.Notification.TOP).build();
+                NotificationManager.show(WIFI_NOTIFICATION_ID, notification);
+
+            } else if (motionEvent.getAction() == MotionEvent.ACTION_HOVER_EXIT) {
+                NotificationManager.hide(WIFI_NOTIFICATION_ID);
+            }
+
+            return false;
+        });
+
+        mBinding.leftController.setOnHoverListener((view, motionEvent) -> {
+            if (motionEvent.getAction() == MotionEvent.ACTION_HOVER_ENTER) {
+                NotificationManager.Notification notification = new NotificationManager.Builder(TrayWidget.this)
+                        .withView(mBinding.leftController)
+                        .withDensity(R.dimen.tray_tooltip_density)
+                        .withLayout(R.layout.tooltip)
+                        .withString(getContext().getString(
+                                R.string.tray_status_left_controller,
+                                String.format(
+                                        LocaleUtils.getDisplayLanguage(
+                                                getContext()).getLocale(),
+                                        "%d%%",
+                                        mLeftControllerBatteryLevel
+                                )
+                        ))
+                        .withAutoHide(false)
+                        .withMargin(-15.0f)
+                        .withPosition(NotificationManager.Notification.TOP).build();
+                NotificationManager.show(LEFT_CONTROLLER_NOTIFICATION_ID, notification);
+
+            } else if (motionEvent.getAction() == MotionEvent.ACTION_HOVER_EXIT) {
+                NotificationManager.hide(LEFT_CONTROLLER_NOTIFICATION_ID);
+            }
+
+            return false;
+        });
+
+        mBinding.rightController.setOnHoverListener((view, motionEvent) -> {
+            if (motionEvent.getAction() == MotionEvent.ACTION_HOVER_ENTER) {
+                NotificationManager.Notification notification = new NotificationManager.Builder(TrayWidget.this)
+                        .withView(mBinding.rightController)
+                        .withDensity(R.dimen.tray_tooltip_density)
+                        .withLayout(R.layout.tooltip)
+                        .withString(getContext().getString(
+                                R.string.tray_status_right_controller,
+                                String.format(
+                                        LocaleUtils.getDisplayLanguage(
+                                                getContext()).getLocale(),
+                                        "%d%%",
+                                        mRightControllerBatteryLevel
+                                )
+                        ))
+                        .withAutoHide(false)
+                        .withMargin(-15.0f)
+                        .withPosition(NotificationManager.Notification.TOP).build();
+                NotificationManager.show(RIGHT_CONTROLLER_NOTIFICATION_ID, notification);
+
+            } else if (motionEvent.getAction() == MotionEvent.ACTION_HOVER_EXIT) {
+                NotificationManager.hide(RIGHT_CONTROLLER_NOTIFICATION_ID);
+            }
+
+            return false;
+        });
+
+        mBinding.headset.setOnHoverListener((view, motionEvent) -> {
+            if (motionEvent.getAction() == MotionEvent.ACTION_HOVER_ENTER) {
+                NotificationManager.Notification notification = new NotificationManager.Builder(TrayWidget.this)
+                        .withView(mBinding.headset)
+                        .withDensity(R.dimen.tray_tooltip_density)
+                        .withLayout(R.layout.tooltip)
+                        .withString(getContext().getString(
+                                R.string.tray_status_headset,
+                                String.format(
+                                        LocaleUtils.getDisplayLanguage(
+                                                getContext()).getLocale(),
+                                        "%d%%",
+                                        mHeadsetBatteryLevel
+                                )
+                        ))
+                        .withAutoHide(false)
+                        .withMargin(-15.0f)
+                        .withPosition(NotificationManager.Notification.TOP).build();
+                NotificationManager.show(HEADSET_NOTIFICATION_ID, notification);
+
+            } else if (motionEvent.getAction() == MotionEvent.ACTION_HOVER_EXIT) {
+                NotificationManager.hide(HEADSET_NOTIFICATION_ID);
+            }
+
+            return false;
+        });
+
+        mBinding.time.setOnHoverListener((view, motionEvent) -> {
+            if (motionEvent.getAction() == MotionEvent.ACTION_HOVER_ENTER) {
+                NotificationManager.Notification notification = new NotificationManager.Builder(TrayWidget.this)
+                        .withView(mBinding.time)
+                        .withDensity(R.dimen.tray_tooltip_density)
+                        .withLayout(R.layout.tooltip)
+                        .withString(getFormattedDate())
+                        .withAutoHide(false)
+                        .withMargin(-15.0f)
+                        .withPosition(NotificationManager.Notification.TOP).build();
+                NotificationManager.show(TIME_NOTIFICATION_ID, notification);
+
+            } else if (motionEvent.getAction() == MotionEvent.ACTION_HOVER_EXIT) {
+                NotificationManager.hide(TIME_NOTIFICATION_ID);
+            }
+
+            return false;
+        });
+
+        mBinding.leftController.setVisibility(mLeftControllerBatteryLevel < 0 ? View.GONE : View.VISIBLE);
+        mBinding.rightController.setVisibility(mRightControllerBatteryLevel < 0 ? View.GONE : View.VISIBLE);
+
+        updateTime();
+        updateWifi();
+    }
+
+    public void start(Context context) {
+        if (mBroadcastReceiver == null) {
+            mBroadcastReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context ctx, Intent intent) {
+                    String action = intent.getAction();
+                    if ((action != null) && action.compareTo(Intent.ACTION_TIME_TICK) == 0) {
+                        updateTime();
+                    }
+                }
+            };
+        }
+        context.registerReceiver(mBroadcastReceiver, new IntentFilter(Intent.ACTION_TIME_TICK));
+    }
+
+    public void stop(Context context) {
+        if (mBroadcastReceiver != null) {
+            context.unregisterReceiver(mBroadcastReceiver);
+        }
     }
 
     Observer<ObservableBoolean> mIsVisibleObserver = aVisible -> {
@@ -292,16 +464,6 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
         mTrayListeners.removeAll(Arrays.asList(listeners));
     }
 
-    private void notifyBookmarksClicked() {
-        hideNotifications();
-        mTrayListeners.forEach(TrayListener::onBookmarksClicked);
-    }
-
-    private void notifyHistoryClicked() {
-        hideNotifications();
-        mTrayListeners.forEach(TrayListener::onHistoryClicked);
-    }
-
     private void notifyTabsClicked() {
         hideNotifications();
         mTrayListeners.forEach(TrayListener::onTabsClicked);
@@ -317,9 +479,9 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
         mTrayListeners.forEach(TrayListener::onAddWindowClicked);
     }
 
-    private void notifyDownloadsClicked() {
+    private void notifyLibraryClicked() {
         hideNotifications();
-        mTrayListeners.forEach(TrayListener::onDownloadsClicked);
+        mTrayListeners.forEach(TrayListener::onLibraryClicked);
     }
 
     @Override
@@ -343,9 +505,17 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
     }
 
     @Override
+    public void onResume() {
+        super.onResume();
+
+        updateTime();
+    }
+
+    @Override
     public void releaseWidget() {
         mWidgetManager.removeUpdateListener(this);
         mWidgetManager.getServicesProvider().getDownloadsManager().removeListener(this);
+        mWidgetManager.getServicesProvider().getConnectivityReceiver().removeListener(this);
         mTrayListeners.clear();
 
         if (mTrayViewModel != null) {
@@ -391,9 +561,8 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
         mWidgetPlacement.parentHandle = -1;
 
         if (mViewModel != null) {
-            mViewModel.getIsBookmarksVisible().removeObserver(mIsBookmarksVisible);
-            mViewModel.getIsHistoryVisible().removeObserver(mIsHistoryVisible);
-            mViewModel.getIsDownloadsVisible().removeObserver(mIsDownloadsVisible);
+            mViewModel.getIsLibraryVisible().removeObserver(mIsLibraryVisible);
+            mViewModel.getIsPrivateSession().removeObserver(mIsPrivateSession);
             mViewModel = null;
         }
 
@@ -415,9 +584,8 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
                 (VRBrowserActivity)getContext(),
                 ViewModelProvider.AndroidViewModelFactory.getInstance(((VRBrowserActivity) getContext()).getApplication()))
                 .get(String.valueOf(mAttachedWindow.hashCode()), WindowViewModel.class);
-        mViewModel.getIsBookmarksVisible().observe((VRBrowserActivity)getContext(), mIsBookmarksVisible);
-        mViewModel.getIsHistoryVisible().observe((VRBrowserActivity)getContext(), mIsHistoryVisible);
-        mViewModel.getIsDownloadsVisible().observe((VRBrowserActivity)getContext(), mIsDownloadsVisible);
+        mViewModel.getIsLibraryVisible().observe((VRBrowserActivity)getContext(), mIsLibraryVisible);
+        mViewModel.getIsPrivateSession().observe((VRBrowserActivity)getContext(), mIsPrivateSession);
 
         mBinding.setViewmodel(mViewModel);
 
@@ -426,37 +594,25 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
         mIsWindowAttached = true;
     }
 
-    private Observer<ObservableBoolean> mIsBookmarksVisible = aBoolean -> {
-        if (mBinding.bookmarksButton.isHovered()) {
+    private Observer<ObservableBoolean> mIsLibraryVisible = aBoolean -> {
+        if (mBinding.libraryButton.isHovered()) {
             return;
         }
         if (aBoolean.get()) {
-            animateViewPadding(mBinding.bookmarksButton, mMaxPadding, mMinPadding, ICON_ANIMATION_DURATION);
+            animateViewPadding(mBinding.libraryButton, mMaxPadding, mMinPadding, ICON_ANIMATION_DURATION);
         } else {
-            animateViewPadding(mBinding.bookmarksButton, mMinPadding, mMaxPadding, ICON_ANIMATION_DURATION);
+            animateViewPadding(mBinding.libraryButton, mMinPadding, mMaxPadding, ICON_ANIMATION_DURATION);
         }
     };
 
-    private Observer<ObservableBoolean> mIsHistoryVisible = aBoolean -> {
-        if (mBinding.historyButton.isHovered()) {
+    private Observer<ObservableBoolean> mIsPrivateSession = aBoolean -> {
+        if (mBinding.privateButton.isHovered() || mViewModel.getIsPrivateSession().getValue().get() == aBoolean.get()) {
             return;
         }
         if (aBoolean.get()) {
-            animateViewPadding(mBinding.historyButton, mMaxPadding, mMinPadding, ICON_ANIMATION_DURATION);
-
+            animateViewPadding(mBinding.privateButton, mMaxPadding, mMinPadding, ICON_ANIMATION_DURATION);
         } else {
-            animateViewPadding(mBinding.historyButton, mMinPadding, mMaxPadding, ICON_ANIMATION_DURATION);
-        }
-    };
-
-    private Observer<ObservableBoolean> mIsDownloadsVisible = aBoolean -> {
-        if (mBinding.downloadsButton.isHovered()) {
-            return;
-        }
-        if (aBoolean.get()) {
-            animateViewPadding(mBinding.downloadsButton, mMaxPadding, mMinPadding, ICON_ANIMATION_DURATION);
-        } else {
-            animateViewPadding(mBinding.downloadsButton, mMinPadding, mMaxPadding, ICON_ANIMATION_DURATION);
+            animateViewPadding(mBinding.privateButton, mMinPadding, mMaxPadding, ICON_ANIMATION_DURATION);
         }
     };
 
@@ -511,12 +667,12 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
     }
 
     public void showBookmarkAddedNotification() {
-        showNotification(BOOKMARK_ADDED_NOTIFICATION_ID, mBinding.bookmarksButton, R.string.bookmarks_saved_notification);
+        showNotification(BOOKMARK_ADDED_NOTIFICATION_ID, mBinding.libraryButton, R.string.bookmarks_saved_notification);
     }
 
     public void showDownloadCompletedNotification(String filename) {
         showNotification(DOWNLOAD_COMPLETED_NOTIFICATION_ID,
-                mBinding.downloadsButton,
+                mBinding.libraryButton,
                 getContext().getString(R.string.download_completed_notification, filename));
     }
 
@@ -531,13 +687,25 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
                     .withDensity(R.dimen.tray_tooltip_density)
                     .withString(string)
                     .withPosition(NotificationManager.Notification.TOP)
-                    .withZTranslation(25.0f).build();
+                    .withMargin(-75.0f)
+                    .withZTranslation(20.0f).build();
             NotificationManager.show(notificationId, notification);
         }
     }
 
     private void hideNotifications() {
         NotificationManager.hideAll();
+    }
+
+    private boolean isImmersive() {
+        if (mWidgetManager != null && mWidgetManager.isWebXRPresenting()) {
+            return true;
+        }
+
+        if (mViewModel != null) {
+            return mViewModel.getIsFullscreen().getValue().get();
+        }
+        return false;
     }
 
     private BookmarksStore.BookmarkListener mBookmarksListener = new BookmarksStore.BookmarkListener() {
@@ -562,7 +730,7 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
                         item.getStatus() == Download.PENDING).count();
         mTrayViewModel.setDownloadsNumber((int)inProgressNum);
         if (inProgressNum == 0) {
-            mBinding.downloadsButton.setLevel(0);
+            mBinding.libraryButton.setLevel(0);
 
         } else {
             long size = downloads.stream()
@@ -574,7 +742,7 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
                     .sum();
             if (size > 0) {
                 long percent = downloaded*100/size;
-                mBinding.downloadsButton.setLevel((int)percent*100);
+                mBinding.libraryButton.setLevel((int)percent*100);
             }
         }
     }
@@ -582,5 +750,133 @@ public class TrayWidget extends UIWidget implements WidgetManagerDelegate.Update
     @Override
     public void onDownloadCompleted(@NonNull Download download) {
         showDownloadCompletedNotification(download.getFilename());
+    }
+
+    private void updateTime() {
+        Date currentTime = Calendar.getInstance().getTime();
+        String androidDateTime = DateFormat.getTimeFormat(getContext()).format(currentTime);
+        String AmPm = "";
+        SimpleDateFormat format = new SimpleDateFormat("HH:mm", LocaleUtils.getDisplayLanguage(getContext()).getLocale());
+        if (!Character.isDigit(androidDateTime.charAt(androidDateTime.length() - 1))) {
+            if (androidDateTime.contains(format.getDateFormatSymbols().getAmPmStrings()[Calendar.AM])) {
+                AmPm = " " + format.getDateFormatSymbols().getAmPmStrings()[Calendar.AM];
+            } else {
+                AmPm = " " + format.getDateFormatSymbols().getAmPmStrings()[Calendar.PM];
+            }
+            androidDateTime = androidDateTime.replace(AmPm, "");
+        }
+        mTrayViewModel.setTime(androidDateTime);
+        mTrayViewModel.setPm(AmPm);
+    }
+
+    @Override
+    public void OnConnectivityChanged(boolean connected) {
+        mTrayViewModel.setWifiConnected(connected);
+        if (!connected) {
+            mLastWifiLevel = -1;
+            mWifiSSID = getContext().getString(R.string.tray_wifi_no_connection);
+        }
+    }
+
+
+    private boolean updateWifiIcon(final int level) {
+        try {
+            Drawable icon = mBinding.wifiIcon.getDrawable();
+            if (icon == null) {
+                return false;
+            }
+            LayerDrawable layerDrawable = (LayerDrawable)icon;
+
+            VectorDrawable drawable = (VectorDrawable) layerDrawable.findDrawableByLayerId(R.id.wifi_layer1);
+            if (drawable != null) {
+                drawable.setAlpha(level >= 0 ? 255 : 0);
+            }
+            drawable = (VectorDrawable) layerDrawable.findDrawableByLayerId(R.id.wifi_layer2);
+            if (drawable != null) {
+                drawable.setAlpha(level >= 1 ? 255 : 0);
+            }
+            drawable = (VectorDrawable) layerDrawable.findDrawableByLayerId(R.id.wifi_layer3);
+            if (drawable != null) {
+                drawable.setAlpha(level >= 2 ? 255 : 0);
+            }
+            drawable = (VectorDrawable) layerDrawable.findDrawableByLayerId(R.id.wifi_layer4);
+            if (drawable != null) {
+                drawable.setAlpha(level >= 3 ? 255 : 0);
+            }
+
+            return true;
+        } catch (Exception e) {
+            Log.e(LOGTAG, "Failed to update wifi icon");
+        }
+
+        return false;
+    }
+
+    private void updateWifi() {
+        if ((mTrayViewModel.getWifiConnected().getValue() != null) && mTrayViewModel.getWifiConnected().getValue().get()) {
+            WifiManager wifiManager = (WifiManager) getContext().getSystemService(Context.WIFI_SERVICE);
+            if (wifiManager != null) {
+                WifiInfo wifiInfo = wifiManager.getConnectionInfo();
+                int level = WifiManager.calculateSignalLevel(wifiInfo.getRssi(), 4);
+                if (level != mLastWifiLevel) {
+                    if (updateWifiIcon(level)) {
+                        mLastWifiLevel = level;
+                    }
+                }
+                WifiInfo currentWifi = wifiManager.getConnectionInfo();
+                if(currentWifi != null) {
+                    mWifiSSID = currentWifi.getSSID().replaceAll("\"", "");
+
+                } else {
+                    mWifiSSID = getContext().getString(R.string.tray_wifi_no_connection);
+                }
+            }
+        }
+    }
+
+    private int toBatteryLevel(final int level) {
+        if (level > 75) {
+            return R.drawable.ic_icon_statusbar_indicator;
+        } else if (level > 50) {
+            return R.drawable.ic_icon_statusbar_indicator_75;
+        } else if (level > 25) {
+            return R.drawable.ic_icon_statusbar_indicator_50;
+        } else if (level > 10) {
+            return R.drawable.ic_icon_statusbar_indicator_25;
+        }
+        return R.drawable.ic_icon_statusbar_indicator_10;
+    }
+
+    public void setBatteryLevels(final int headset, final boolean isCharging, final int leftController, final int rightController) {
+        updateWifi();
+        if (DeviceType.getType() == DeviceType.OculusQuest) {
+            mTrayViewModel.setLeftControllerIcon(R.drawable.ic_icon_statusbar_leftcontroller);
+            mTrayViewModel.setRightControllerIcon(R.drawable.ic_icon_statusbar_rightcontroller);
+        }
+        mTrayViewModel.setHeadsetIcon(isCharging ? R.drawable.ic_icon_statusbar_headset_charging : R.drawable.ic_icon_statusbar_headset_normal);
+        mTrayViewModel.setHeadsetBatteryLevel(toBatteryLevel(headset));
+
+        mHeadsetBatteryLevel = headset;
+        mLeftControllerBatteryLevel = leftController;
+        mRightControllerBatteryLevel = rightController;
+
+        if (leftController < 0) {
+            mBinding.leftController.setVisibility(View.GONE);
+        } else {
+            mBinding.leftController.setVisibility(View.VISIBLE);
+            mTrayViewModel.setLeftControllerBatteryLevel(toBatteryLevel(leftController));
+        }
+        if (rightController < 0) {
+            mBinding.rightController.setVisibility(View.GONE);
+        } else {
+            mBinding.rightController.setVisibility(View.VISIBLE);
+            mTrayViewModel.setRightControllerBatteryLevel(toBatteryLevel(rightController));
+        }
+    }
+
+    @NonNull
+    private String getFormattedDate() {
+        SimpleDateFormat format = new SimpleDateFormat("EEEE, dd MMMM yyyy", LocaleUtils.getDisplayLanguage(getContext()).getLocale());
+        return format.format(new Date());
     }
 }

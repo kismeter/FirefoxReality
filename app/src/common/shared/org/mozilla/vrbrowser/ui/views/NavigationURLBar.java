@@ -37,9 +37,7 @@ import org.mozilla.vrbrowser.browser.BookmarksStore;
 import org.mozilla.vrbrowser.browser.engine.Session;
 import org.mozilla.vrbrowser.browser.engine.SessionStore;
 import org.mozilla.vrbrowser.databinding.NavigationUrlBinding;
-import org.mozilla.vrbrowser.search.SearchEngineWrapper;
 import org.mozilla.vrbrowser.telemetry.GleanMetricsService;
-import org.mozilla.vrbrowser.telemetry.TelemetryWrapper;
 import org.mozilla.vrbrowser.ui.viewmodel.SettingsViewModel;
 import org.mozilla.vrbrowser.ui.viewmodel.WindowViewModel;
 import org.mozilla.vrbrowser.ui.widgets.UIWidget;
@@ -109,6 +107,11 @@ public class NavigationURLBar extends FrameLayout {
 
     @SuppressLint("ClickableViewAccessibility")
     private void initialize(Context aContext) {
+        mSettingsViewModel = new ViewModelProvider(
+                (VRBrowserActivity)getContext(),
+                ViewModelProvider.AndroidViewModelFactory.getInstance(((VRBrowserActivity) getContext()).getApplication()))
+                .get(SettingsViewModel.class);
+
         mAudio = AudioEngine.fromContext(aContext);
 
         mUIThreadExecutor = ((VRBrowserApplication)getContext().getApplicationContext()).getExecutors().mainThread();
@@ -120,6 +123,7 @@ public class NavigationURLBar extends FrameLayout {
         // Layout setup
         mBinding = DataBindingUtil.inflate(LayoutInflater.from(getContext()), R.layout.navigation_url, this, true);
         mBinding.setLifecycleOwner((VRBrowserActivity)getContext());
+        mBinding.setSettingsViewmodel(mSettingsViewModel);
 
         // Use Domain autocomplete provider from components
         mAutocompleteProvider = new ShippedDomainsProvider();
@@ -239,9 +243,6 @@ public class NavigationURLBar extends FrameLayout {
             mViewModel.getIsBookmarked().removeObserver(mIsBookmarkedObserver);
             mViewModel = null;
         }
-        if (mSettingsViewModel != null) {
-            mSettingsViewModel = null;
-        }
     }
 
     public void attachToWindow(@NonNull WindowWidget aWindow) {
@@ -249,15 +250,8 @@ public class NavigationURLBar extends FrameLayout {
                 (VRBrowserActivity)getContext(),
                 ViewModelProvider.AndroidViewModelFactory.getInstance(((VRBrowserActivity) getContext()).getApplication()))
                 .get(String.valueOf(aWindow.hashCode()), WindowViewModel.class);
-        mSettingsViewModel = new ViewModelProvider(
-                (VRBrowserActivity)getContext(),
-                ViewModelProvider.AndroidViewModelFactory.getInstance(((VRBrowserActivity) getContext()).getApplication()))
-                .get(SettingsViewModel.class);
 
         mBinding.setViewmodel(mViewModel);
-        mBinding.setSettingsViewmodel(mSettingsViewModel);
-
-        mSettingsViewModel.refresh();
 
         mViewModel.getIsLoading().observe((VRBrowserActivity)getContext(), mIsLoadingObserver);
         mViewModel.getIsBookmarked().observe((VRBrowserActivity)getContext(), mIsBookmarkedObserver);
@@ -352,22 +346,7 @@ public class NavigationURLBar extends FrameLayout {
     }
 
     public  void handleURLEdit(String text) {
-        text = text.trim();
-
-        String url;
-        if ((UrlUtils.isDomain(text) || UrlUtils.isIPUri(text)) && !text.contains(" ")) {
-            url = text;
-            TelemetryWrapper.urlBarEvent(true);
-            GleanMetricsService.urlBarEvent(true);
-        } else if (text.startsWith("about:") || text.startsWith("resource://")) {
-            url = text;
-        } else {
-            url = SearchEngineWrapper.get(getContext()).getSearchURL(text);
-
-            // Doing search in the URL bar, so sending "aIsURL: false" to telemetry.
-            TelemetryWrapper.urlBarEvent(false);
-            GleanMetricsService.urlBarEvent(false);
-        }
+        String url = UrlUtils.urlForText(getContext(), text.trim());
 
         mViewModel.setUrl(url);
 
@@ -395,7 +374,6 @@ public class NavigationURLBar extends FrameLayout {
             mDelegate.onVoiceSearchClicked();
         }
 
-        TelemetryWrapper.voiceInputEvent();
         GleanMetricsService.voiceInputEvent();
     };
 

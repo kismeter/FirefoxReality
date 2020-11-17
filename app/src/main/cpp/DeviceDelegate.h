@@ -39,6 +39,7 @@ public:
                               const double aBottomDegrees) = 0;
   virtual void SetEyeOffset(const device::Eye aEye, const float aX, const float aY, const float aZ) = 0;
   virtual void SetEyeResolution(const int32_t aWidth, const int32_t aHeight) = 0;
+  virtual void SetNativeFramebufferScaleFactor(const float aScale) = 0;
   virtual void SetStageSize(const float aWidth, const float aDepth) = 0;
   virtual void SetSittingToStandingTransform(const vrb::Matrix& aTransform) = 0;
   virtual void CompleteEnumeration() = 0;
@@ -86,6 +87,7 @@ public:
   virtual VRLayerCylinderPtr CreateLayerCylinder(int32_t aWidth, int32_t aHeight,
                                                 VRLayerSurface::SurfaceType aSurfaceType) { return nullptr; }
   virtual VRLayerCylinderPtr CreateLayerCylinder(const VRLayerSurfacePtr& aMoveLayer) { return nullptr; }
+  virtual VRLayerProjectionPtr CreateLayerProjection(VRLayerSurface::SurfaceType aSurfaceType) { return nullptr; }
   virtual VRLayerCubePtr CreateLayerCube(int32_t aWidth, int32_t aHeight, GLint aInternalFormat) { return nullptr; }
   virtual VRLayerEquirectPtr CreateLayerEquirect(const VRLayerPtr &aSource) { return nullptr; }
   virtual void DeleteLayer(const VRLayerPtr& aLayer) {};
