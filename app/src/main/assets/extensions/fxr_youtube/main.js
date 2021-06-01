@@ -3,12 +3,12 @@ const CUSTOM_USER_AGENT = 'Mozilla/5.0 (Linux; Android 7.1.1; Quest) AppleWebKit
 const LOGTAG = '[firefoxreality:webcompat:youtube]';
 const VIDEO_PROJECTION_PARAM = 'mozVideoProjection';
 const YT_SELECTORS = {
-  disclaimer: '.yt-alert-message, yt-alert-message',
   player: '#movie_player',
   embedPlayer: '.html5-video-player',
   largePlayButton: '.ytp-large-play-button',
   thumbnail: '.ytp-cued-thumbnail-overlay-image',
-  embedTitle: '.ytp-title-text',
+  embedTitle: 'title',
+  description: '.style-scope .ytd-expander',
   queueHandle: 'ytd-playlist-panel-video-renderer',
   playbackControls: '.ytp-chrome-bottom',
   overlays: '.videowall-endscreen, .ytp-upnext, .ytp-ce-element'
@@ -79,23 +79,35 @@ class YoutubeExtension {
 
     is360Video() {
         const targets = [
-            document.querySelector(YT_SELECTORS.disclaimer),
-            document.querySelector(YT_SELECTORS.embedTitle)
+            document.querySelector(YT_SELECTORS.embedTitle),
+            document.querySelector(YT_SELECTORS.description)
         ];
-        return targets.some((node) => node && this.is360(node.textContent));;
+        return targets.some((node) => node && this.is360(node.textContent));
     }
 
     isStereo(text) {
         const words = text.toLowerCase().split(/\s+|\./);
-        return words.includes('stereo') || words.includes('3d') || words.includes('vr');
+        return words.includes('stereo') || words.includes('3d');
     }
 
     isStereoVideo() {
         const targets = [
-            document.querySelector(YT_SELECTORS.disclaimer),
-            document.querySelector(YT_SELECTORS.embedTitle)
+            document.querySelector(YT_SELECTORS.embedTitle),
+            document.querySelector(YT_SELECTORS.description)
         ];
-        return targets.some((node) => node && this.isStereo(node.textContent));;
+        return targets.some((node) => node && this.isStereo(node.textContent));
+    }
+
+    isSBS(text) {
+        return text.toLowerCase().includes('sbs') || text.toLowerCase().includes('side by side');
+    }
+
+    isSBSVideo() {
+        const targets = [
+            document.querySelector(YT_SELECTORS.embedTitle),
+            document.querySelector(YT_SELECTORS.description)
+        ];
+        return targets.some((node) => node && this.isSBS(node.textContent));
     }
 
     // Automatically select a video projection if needed
@@ -112,8 +124,15 @@ class YoutubeExtension {
         }
         // There is no standard API to detect video projection yet.
         // Try to infer it from the video disclaimer or title for now.
-        if (this.is360Video()) {
-            qs.set('mozVideoProjection', this.isStereoVideo() ? '360s_auto' : '360_auto');
+        let projection =  null;
+        if (this.isSBSVideo()) {
+            projection = '3d_auto';
+        } else if (this.is360Video()) {
+            projection = this.isStereoVideo() ? '360s_auto' : '360_auto';
+        }
+
+        if (projection !== null) {
+            qs.set('mozVideoProjection', projection);
             this.updateURL(qs);
             this.updateVideoStyle();
             logDebug(`Video projection set to: ${qs.get(VIDEO_PROJECTION_PARAM)}`);
@@ -150,8 +169,11 @@ class YoutubeExtension {
             player.requestFullscreen();
             // Force video play when entering immersive mode.
             setTimeout(() => this.retry("PlayVideo", () => {
-                player.playVideo();
-                return !this.getVideo().paused;
+                const paused = this.getVideo().paused;
+                if (paused) {
+                     player.playVideo();
+                }
+                return !paused;
             }), 200);
         }
     }
@@ -207,7 +229,6 @@ class YoutubeExtension {
         if (youtube.isInFullscreen()) {
             if (window.innerHeight < CHROME_CONTROLS_MIN_WIDTH) {
               var of = CHROME_CONTROLS_MIN_WIDTH - window.innerHeight;
-              console.log(of)
               document.querySelector(".ytp-chrome-bottom").style.setProperty("margin-bottom", `${of}px`)
             } else {
               document.querySelector(".ytp-chrome-bottom").style.removeProperty("margin-bottom")
@@ -362,4 +383,4 @@ window.addEventListener('pushstate', () => youtube.overrideVideoProjection());
 window.addEventListener('popstate', () => youtube.overrideVideoProjection());
 window.addEventListener('click', event => youtube.overrideClick(event));
 window.addEventListener('mouseup', event => youtube.queueContextMenuFix());
-window.addEventListener("yt-navigate-finish", () => youtube.playerFixes());
+window.addEventListener("yt-navigate-finish", () => youtube.waitForVideoReady(() => youtube.playerFixes()));
